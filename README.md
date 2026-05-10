@@ -56,6 +56,7 @@ You can clone and run this entire system in under 5 minutes using Docker.
 
 ## Architecture Overview
 
+```
 ┌──────────────┐      ┌───────────────┐
 │  User Query  │───►  │ FastAPI State │
 └──────────────┘      └───────┬───────┘
@@ -77,40 +78,60 @@ You can clone and run this entire system in under 5 minutes using Docker.
                                           │ 2. RRF Merging  │
                                           │ 3. Cross-Encoder│
                                           └─────────────────┘
+```
 
+* The Brain: A native Python while loop running a Llama 3.1 8B model via the Groq SDK.
 
-> 	The Brain: A native Python while loop running a Llama 3.1 8B model via the Groq SDK.
+* The Memory: A session-scoped sliding window that maintains conversational state.
 
-> The Memory: A session-scoped sliding window that maintains conversational state.
+* The Tools: The LLM routes between an AST-based Safe Calculator, an Ambiguity Clarifier, and an Advanced RAG Retriever.
 
-> The Tools: The LLM routes between an AST-based Safe Calculator, an Ambiguity Clarifier, and an Advanced RAG Retriever.
-
-> The Retriever: A multi-stage engine combining Semantic Search (FAISS) + Keyword Search (BM25), merged via Reciprocal Rank Fusion (RRF), and filtered by a Cross-Encoder Reranker.
+* The Retriever: A multi-stage engine combining Semantic Search (FAISS) + Keyword Search (BM25), merged via Reciprocal Rank Fusion (RRF), and filtered by a Cross-Encoder Reranker.
 
 ---
 
 ## Folder structure
 
 ```text
-skyclad-agentic-rag/
-├── backend/                  
+agentic-rag/
+│
+├── backend/                            #  The core ML & API microservice
 │   ├── app/
-│   │   ├── main.py            # FastAPI application & API routes
-│   │   ├── agent.py           # The while-loop state machine & routing
-│   │   ├── retriever.py       # FAISS, BM25, RRF, Cross-Encoder logic
-│   │   ├── tools.py           # AST Calculator & Tool schemas
-│   │   └── memory.py          # Sliding window conversational state
-│   ├── data_pipeline/         
-│   │   ├── ingest.py          # Downloads/reads arXiv PDFs
-│   │   └── build_index.py     # Chunks -> Embeds -> Saves FAISS/BM25 indices
-│   ├── utils/                 
-│   │   └── logger.py          # Configures terminal observability
-│   └── Dockerfile             # Backend container setup
-├── config.py                  # Centralized hyperparameters
-├── docker-compose.yml         # One-click deployment
-├── requirements.txt           # Core dependencies
-└── README.md                  # Documentation
+│   │   ├── __init__.py
+│   │   ├── main.py                     # FastAPI application & API routes
+│   │   ├── agent.py                    # The while-loop state machine & routing
+│   │   ├── retriever.py                # FAISS loading, hybrid search, reranking
+│   │   ├── tools.py                    # External API logic (search, calc, etc.)
+│   │   └── memory.py                   # Sliding window & semantic memory states
+│   │
+│   ├── data_pipeline/                  # One-time offline execution scripts
+│   │   ├── ingest.py                   # Downloads/reads arXiv PDFs
+│   │   └── build_index.py              # Chunks -> Embeds -> Saves FAISS index
+│   │
+│   ├── config.py                       # Centralized hyperparameters (Chunk size, Top-K, LLM models)
+│   ├── requirements.txt
+│   └── Dockerfile                      # Backend container setup
+|
+├── utils/                              # Centralized utilities
+│   ├── __init__.py
+│   ├── logger.py                       # Configures terminal + file logging
+│   └── exceptions.py                   # Custom error classes (AgentError, RAGError)
+|
+├── frontend/                           #  The UI microservice
+│   ├── app.py                          # Streamlit application(not yet!!)
+│   ├── requirements.txt
+│   └── Dockerfile                      # Frontend container setup
+│
+├── data/                               #  Ignored by .Git
+│   ├── raw_pdfs/                       # Downloaded arXiv papers (50)
+│   └── vector_store/                   # The saved .faiss and .pkl index files
+|
+├── docker-compose.yml                  # One-click local deployment 
+├── README.md                          
+└── logs/
+    └── agent.log                       # proper log files stored
 
+```
 ---
 
 ## Engineering Decisions Log
@@ -125,10 +146,11 @@ This section breaks down why I built the system this way, prioritizing control a
 
 **Retrieval Engine (Depth > Breadth):** I didn't want to just return top-K vectors. I implemented Hybrid Search (Semantic + BM25) to catch both contextual meaning and exact acronyms. However, the most critical addition was the MS-MARCO Cross-Encoder Reranker.
 
-Ablation Note: Without the reranker, FAISS would occasionally return chunks that matched keywords but lacked context, confusing the LLM. By adding the Cross-Encoder with a strict 0.0 relevance threshold, the system actively drops weak chunks. If no chunks pass, it returns an empty array, forcing the LLM to admit it doesn't know rather than hallucinating.
+* Ablation Note: Without the reranker, FAISS would occasionally return chunks that matched keywords but lacked context, confusing the LLM. By adding the Cross-Encoder with a strict 0.0 relevance threshold, the system actively drops weak chunks. If no chunks pass, it returns an empty array, forcing the LLM to admit it doesn't know rather than hallucinating.
 
 **Memory Design:** I implemented a Conversational Memory (sliding window of the last N turns) because resolving pronouns (e.g., "What did that paper say?") is critical for natural RAG interactions.
 
+---
 ## Handling Failure Modes
 
 The system was heavily tested against edge cases. Here is how it reacts:
@@ -141,6 +163,7 @@ The system was heavily tested against edge cases. Here is how it reacts:
 
 **The retrieved context contradicts itself:** The system prompt explicitly instructs the LLM that if multiple retrieved papers offer conflicting methodologies or results, it must highlight the contradiction to the user rather than forcing a single "truth."
 
+---
 ## Known Limitations & Future Work
 
 If I had another week to work on this, here is exactly what I would improve:
@@ -151,8 +174,10 @@ If I had another week to work on this, here is exactly what I would improve:
 
 **Semantic Chunking:** I used a fixed token-size sliding window for chunking. While standard, it's a blunt instrument for scientific PDFs and risks cutting mathematical proofs in half. I would implement a layout-aware parser to chunk documents by their actual structural headers (Abstract, Methodology, Conclusion) to preserve perfect semantic boundaries.
 
+---
 ## Demo Video
 
 🔗 Watch the Architecture & Live Demo Here
 
-In this video, I walk through the architecture diagram, demonstrate the multi-tool synthesis (Calculator + RAG), trigger the ambiguity failure mode, and show how the stateful memory resolves context.
+#### In this video, I walk through the architecture diagram, demonstrate the multi-tool synthesis (Calculator + RAG), trigger the ambiguity failure mode, and show how the stateful memory resolves context.
+---
