@@ -1,4 +1,4 @@
-# Skyclad Ventures Agentic RAG
+# Agentic RAG
 
 A compact autonomous Agentic RAG repository that routes user queries through a Python agent loop, chooses between technical document search, calculator execution, clarification, or refusal, and uses a Groq-native tool interface for deterministic tool invocation.
 
