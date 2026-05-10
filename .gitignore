@@ -1,0 +1,30 @@
+# Environments
+venv/
+env/
+agenticRAG_venv/
+.env
+
+# Data & Vector Stores (CRITICAL TO IGNORE)
+data/
+backend/data/
+
+# Logs
+logs/
+*.log
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+
+.vscode/
+
+.env.*
+
+

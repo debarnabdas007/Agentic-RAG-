@@ -1,0 +1,13 @@
+PDFs
+ ↓
+Text Extraction
+ ↓
+Cleaning
+ ↓
+Chunking
+ ↓
+Embedding Generation
+ ↓
+FAISS Vector Index
+ ↓
+Metadata Persistence

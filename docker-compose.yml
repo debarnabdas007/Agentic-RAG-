@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: skyclad_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # CRITICAL: This mounts your local data folder into the container
+      # so it can read the FAISS index without blowing up the image size.
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped

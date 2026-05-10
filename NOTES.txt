@@ -1,0 +1,331 @@
+
+Overall Architecture :-
+
+                     ┌──────────────┐
+                     │ User Query   │
+                     └──────┬───────┘
+                            ▼
+     ┌──────────────►┌────────────────────┐
+     │               │  Agent Reasoning   │◄──────┐
+     │               │ (The While Loop)   │       │
+     │               └─────────┬──────────┘       │
+     │                         │                  │
+     │       ┌─────────┬───────┼───────┬────────┐ │
+     │       ▼         ▼       ▼       ▼        ▼ │
+     │   Retrieve   Use     Ask for  Refuse   Final Answer
+     │   Docs       Tool    Clarity             │
+     │       │         │       │       │        │
+     │       └────┬────┘       │       │        │
+     └────────────┘            ▼       ▼        ▼
+   (Updates Context         (Wait for user / End turn)
+    and loops back)
+
+
+
+
+
+
+
+
+
+My Retrieval Architecture in Detail:
+
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                         USER QUERY / API CALL                       │
+│                 FastAPI Endpoint  →  /chat or /ask                  │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                           AGENT LOOP                                │
+│                     backend/app/agent.py                            │
+│                                                                     │
+│  Responsibilities:                                                  │
+│  • Maintains agent state                                            │
+│  • Reads conversation memory                                        │
+│  • Decides next action                                              │
+│  • Tool routing                                                     │
+│  • Refusal / clarification logic                                    │
+│  • Final answer generation                                          │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+             ┌────────────────────┼────────────────────┐
+             │                    │                    │
+             ▼                    ▼                    ▼
+
+   ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+   │ RETRIEVE TOOL  │   │ CALCULATOR     │   │ REFUSE / ASK   │
+   │                │   │ TOOL           │   │ CLARIFICATION  │
+   └────────────────┘   └────────────────┘   └────────────────┘
+             │
+             ▼
+
+═══════════════════════════════════════════════════════════════════════
+                    ADVANCED RETRIEVER PIPELINE
+═══════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     AdvancedRetriever Class                         │
+│                    backend/app/retriever.py                         │
+└─────────────────────────────────────────────────────────────────────┘
+
+                             INITIALIZATION
+═══════════════════════════════════════════════════════════════════════
+
+                ┌────────────────────────────┐
+                │ SentenceTransformer Model  │
+                │ all-MiniLM-L6-v2           │
+                │                            │
+                │ Used for query embeddings  │
+                └────────────────────────────┘
+
+                ┌────────────────────────────┐
+                │ CrossEncoder Reranker      │
+                │ ms-marco-MiniLM-L-6-v2     │
+                │                            │
+                │ Deep semantic reranking    │
+                └────────────────────────────┘
+
+                ┌────────────────────────────┐
+                │ FAISS Index                │
+                │ index.faiss                │
+                │                            │
+                │ Vector similarity search   │
+                └────────────────────────────┘
+
+                ┌────────────────────────────┐
+                │ Metadata Store             │
+                │ metadata.pkl               │
+                │                            │
+                │ Chunk text + source/page   │
+                └────────────────────────────┘
+
+                ┌────────────────────────────┐
+                │ BM25 Corpus                │
+                │ rank_bm25                  │
+                │                            │
+                │ Keyword retrieval engine   │
+                └────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════
+                         RETRIEVAL FLOW
+═══════════════════════════════════════════════════════════════════════
+
+USER QUERY
+   │
+   ▼
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EMPTY QUERY GUARD                                │
+│        if not query or not query.strip(): return []                 │
+└─────────────────────────────────────────────────────────────────────┘
+   │
+   ▼
+
+═══════════════════════════════════════════════════════════════════════
+                      PARALLEL RETRIEVAL
+═══════════════════════════════════════════════════════════════════════
+
+        ┌─────────────────────────┐
+        │     SEMANTIC SEARCH     │
+        └─────────────────────────┘
+                    │
+                    ▼
+      Query → Embedding Generation
+                    │
+                    ▼
+      normalize_embeddings=True
+                    │
+                    ▼
+      Unit Vector Conversion
+                    │
+                    ▼
+      FAISS IndexFlatIP Search
+                    │
+                    ▼
+      Top-K Similar Chunks
+                    │
+                    ▼
+      {chunk_index : rank}
+
+───────────────────────────────────────────────────────────────────────
+
+        ┌─────────────────────────┐
+        │      BM25 SEARCH        │
+        └─────────────────────────┘
+                    │
+                    ▼
+      Regex Tokenization
+                    │
+                    ▼
+      Keyword Matching
+                    │
+                    ▼
+      BM25 Scoring
+                    │
+                    ▼
+      Top-K Ranked Chunks
+                    │
+                    ▼
+      {chunk_index : rank}
+
+═══════════════════════════════════════════════════════════════════════
+                    HYBRID SEARCH FUSION
+═══════════════════════════════════════════════════════════════════════
+
+        Semantic Results
+                +
+        BM25 Results
+                │
+                ▼
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                 Reciprocal Rank Fusion (RRF)                        │
+│                                                                     │
+│     score += 1 / (k_constant + rank_position)                       │
+│                                                                     │
+│     Uses ranking positions instead of raw scores                    │
+│                                                                     │
+│     Robust merging between:                                         │
+│     • cosine similarity scores                                      │
+│     • BM25 keyword scores                                           │
+└─────────────────────────────────────────────────────────────────────┘
+
+                │
+                ▼
+
+      Top Hybrid Candidates
+                │
+                ▼
+
+═══════════════════════════════════════════════════════════════════════
+                          RERANKING
+═══════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Cross-Encoder Reranker                           │
+│                                                                     │
+│  Input:                                                             │
+│     [query, chunk_text] pairs                                       │
+│                                                                     │
+│  Example:                                                           │
+│     ["How does reranking work?", "Cross-encoders improve..."]       │
+│                                                                     │
+│  Output:                                                            │
+│     Deep relevance score                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+                │
+                ▼
+
+      Attach rerank_score
+                │
+                ▼
+
+      Sort descending
+                │
+                ▼
+
+═══════════════════════════════════════════════════════════════════════
+                      THRESHOLD FILTERING
+═══════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                  RERANK_THRESHOLD FILTER                            │
+│                                                                     │
+│  Keep only chunks where:                                            │
+│      rerank_score > threshold                                       │
+│                                                                     │
+│  Purpose:                                                           │
+│  • Prevent hallucinations                                           │
+│  • Enable refusal logic                                             │
+│  • Remove weak retrievals                                           │
+│  • Improve answer quality                                           │
+└─────────────────────────────────────────────────────────────────────┘
+
+                │
+                ▼
+
+      Final Top-N Chunks
+                │
+                ▼
+
+═══════════════════════════════════════════════════════════════════════
+                       FINAL OUTPUT
+═══════════════════════════════════════════════════════════════════════
+
+[
+  {
+    "source": "...pdf",
+    "page": 6,
+    "text": "...",
+    "rerank_score": 2.14
+  },
+  ...
+]
+
+                │
+                ▼
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                  PASSED TO THE LLM AGENT                           │
+│                                                                     │
+│  The agent now decides:                                             │
+│  • answer                                                           │
+│  • refuse                                                           │
+│  • ask clarification                                                │
+│  • use another tool                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+
+═══════════════════════════════════════════════════════════════════════
+                    OFFLINE INDEXING PIPELINE
+═══════════════════════════════════════════════════════════════════════
+
+                    arXiv PDFs
+                         │
+                         ▼
+
+                 Text Extraction
+                    (PyMuPDF)
+                         │
+                         ▼
+
+                    Cleaning
+                         │
+                         ▼
+
+             Sliding Window Chunking
+                         │
+                         ▼
+
+               Chunk Overlapping
+                         │
+                         ▼
+
+              Embedding Generation
+            (SentenceTransformer)
+                         │
+                         ▼
+
+         normalize_embeddings=True
+                         │
+                         ▼
+
+                 Vector Embeddings
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+
+      index.faiss              metadata.pkl
+   (vector storage)        (text + source info)
+
+             │                       │
+             └───────────┬───────────┘
+                         ▼
+
+                Runtime Retrieval

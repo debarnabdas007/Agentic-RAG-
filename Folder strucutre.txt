@@ -1,0 +1,41 @@
+skyclad-agentic-rag/
+│
+├── backend/                            #  The core ML & API microservice
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py                     # FastAPI application & API routes
+│   │   ├── agent.py                    # The while-loop state machine & routing
+│   │   ├── retriever.py                # FAISS loading, hybrid search, reranking
+│   │   ├── tools.py                    # External API logic (search, calc, etc.)
+│   │   └── memory.py                   # Sliding window & semantic memory states
+│   │
+│   ├── data_pipeline/                  #  One-time offline execution scripts
+│   │   ├── ingest.py                   # Downloads/reads arXiv PDFs
+│   │   └── build_index.py              # Chunks -> Embeds -> Saves FAISS index
+│   │
+│   ├── config.py                       #  Centralized hyperparameters (Chunk size, Top-K, LLM models)
+│   ├── requirements.txt
+│   └── Dockerfile                      # Backend container setup
+|
+├── utils/                              # 🛠️ Centralized utilities
+│   ├── __init__.py
+│   ├── logger.py                       # Configures terminal + file logging
+│   └── exceptions.py                   # Custom error classes (AgentError, RAGError)
+|
+├── frontend/                           #  The UI microservice
+│   ├── app.py                          # Streamlit application
+│   ├── requirements.txt
+│   └── Dockerfile                      # Frontend container setup
+│
+├── data/                               #  Ignored by Git
+│   ├── raw_pdfs/                       # Downloaded arXiv papers
+│   └── vector_store/                   # The saved .faiss and .pkl index files
+│
+├── evals/                              #  The required testing harness
+│   └── test_edge_cases.py              # Script to run the 10 custom questions
+│
+├── docker-compose.yml                  #  One-click local deployment 
+├── .env.example                        # Template for required keys (Groq, etc.)
+├── README.md                           # Your design decisions and setup guide
+└── logs/
+    └── agent.log                       #  Where the logger writes the agent's brain dumps
