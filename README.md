@@ -1,81 +1,158 @@
-# Agentic RAG
+# Agentic RAG Architecture
 
-A compact autonomous Agentic RAG repository that routes user queries through a Python agent loop, chooses between technical document search, calculator execution, clarification, or refusal, and uses a Groq-native tool interface for deterministic tool invocation.
+Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, I built a deployable, stateful backend where a Large Language Model acts as an autonomous routing engine. It decides for itself when to calculate math, when to search a dual-engine knowledge base, when to ask for clarity, and when to refuse a prompt.
 
 ## Table of Contents
+1. [Setup Instructions](#setup-instructions)
+2. [Architecture Overview](#architecture-overview)
+3. [Folder strcuture](#folder-structure)
+4. [Engineering Decisions Log](#engineering-decisions-log)
+5. [Handling Failure Modes](#handling-failure-modes)
+7. [Known Limitations & Future Work](#known-limitations--future-work)
+8. [Demo Video](#demo-video)
 
-1. Setup & Run Instructions
-2. Architecture Overview
-3. Engineering Decisions Log (CRITICAL)
-4. Failure Modes & Defenses
-5. Future Work
-6. Demo Video
+---
 
-## Setup & Run Instructions
+## Setup Instructions
 
-```powershell
-# Activate the workspace virtual environment
-agenticRAG_venv\Scripts\activate
+You can clone and run this entire system in under 5 minutes using Docker.
 
-# Install backend dependencies
-pip install -r backend/requirements.txt
+1. **Clone the repository:**
+   ```bash
+   git clone <your-repo-link>
+   cd skyclad-agentic-rag
+   ```
 
-# Optional: install frontend dependencies if required
-pip install -r frontend/requirements.txt
-```
+2. **Set up your environment variables:**
+   Create a `.env` file in the root directory and add your Groq API key:
 
-Create a `.env` file in the repository root and set your Groq API key:
+   ```env
+   GROQ_API_KEY=your_api_key_here
+   ```
 
-```env
-GROQ_API_KEY=your_groq_api_key
-```
+3. **Run the Data Pipeline (One-time setup):**
+   (Note: The repo does not contain the 50 arXiv PDFs to save space. Run these to pull the papers and build the FAISS/BM25 indices locally).
 
-Run data ingestion and indexing:
+   ```bash
+   # Create a virtual environment and install requirements
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
 
-```powershell
-python backend/data_pipeline/ingest.py
-python backend/data_pipeline/build_index.py
-```
+   # Download papers and build the vector database
+   python -m backend.data_pipeline.ingest
+   python -m backend.data_pipeline.build_index
+   ```
 
-Start the FastAPI server:
+4. **Spin up the Backend:**
 
-```powershell
-uvicorn backend.app.main:app --reload --port 8000
-```
+   ```bash
+   docker-compose up --build
+   ```
+
+   The API will be live at http://localhost:8000/docs where you can interact with the Agent via the Swagger UI /chat endpoint.
+
+---
 
 ## Architecture Overview
 
-- `frontend/app.py` sends user requests to FastAPI in `backend/app/main.py`.
-- FastAPI forwards requests into `SkycladAgent.chat()` in `backend/app/agent.py`.
-- The agent runs a raw Python `while` loop, assembles the system prompt and memory window, and dispatches native tool calls through the Groq SDK.
-- Tool implementations are defined in `backend/app/tools.py`.
-- Search tools combine the advanced retriever in `backend/app/retriever.py` with a calculator tool and explicit clarification/refusal handling.
+┌──────────────┐      ┌───────────────┐
+│  User Query  │───►  │ FastAPI State │
+└──────────────┘      └───────┬───────┘
+                              ▼
+┌──────────────┐      ┌───────────────┐
+│ Chat History │◄────►│  Agent Brain  │ (Llama 3.1 8B via Groq)
+└──────────────┘      └───────┬───────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+┌───────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│ Calculator    │   │ Refuse/Clarify  │   │ RAG Retriever   │
+│ (ast.parse)   │   │ (Direct Output) │   │ (Hybrid Search) │
+└───────────────┘   └─────────────────┘   └─────────┬───────┘
+                                                    │
+                                                    ▼
+                                          ┌─────────────────┐
+                                          │ 1. FAISS & BM25 │
+                                          │ 2. RRF Merging  │
+                                          │ 3. Cross-Encoder│
+                                          └─────────────────┘
 
-## Engineering Decisions Log (CRITICAL)
 
-- PDF Extraction
-	- Uses `PyMuPDF` in `backend/data_pipeline/ingest.py` because it preserves whitespace and layout for complex arXiv-style papers better than PyPDF2.
-- Vector Search
-	- Uses FAISS `IndexFlatIP` with L2-normalized embeddings in `backend/data_pipeline/build_index.py`, which mathematically equates to exact cosine similarity and ignores document magnitude.
-- Retrieval Engine
-	- Builds a hybrid retrieval pipeline in `backend/app/retriever.py`: BM25 lexical search plus FAISS semantic search, merged with Reciprocal Rank Fusion (RRF), then reranked by `ms-marco` cross-encoder with a confidence threshold.
-- Agent Framework
-	- Uses raw Python control flow in `backend/app/agent.py` and the native Groq SDK instead of LangChain/LangGraph for full observability, deterministic tool execution, and prevention of hidden recursive loops.
+> 	The Brain: A native Python while loop running a Llama 3.1 8B model via the Groq SDK.
 
-## Failure Modes & Defenses
+> The Memory: A session-scoped sliding window that maintains conversational state.
 
-- Empty corpus results
-	- If no document chunk meets the reranker threshold, the system refuses rather than hallucinating.
-- Ambiguous queries
-	- The agent exits the tool loop and asks for clarification when user intent is vague.
-- Out-of-domain questions
-	- The system prompt enforces strict refusal for off-domain or non-technical requests.
+> The Tools: The LLM routes between an AST-based Safe Calculator, an Ambiguity Clarifier, and an Advanced RAG Retriever.
 
-## Future Work
+> The Retriever: A multi-stage engine combining Semantic Search (FAISS) + Keyword Search (BM25), merged via Reciprocal Rank Fusion (RRF), and filtered by a Cross-Encoder Reranker.
 
-- Migrate the in-memory sliding window in `backend/app/memory.py` to a Redis-backed persistent memory store.
-- Add an LLM-based query rewriter to resolve pronouns in follow-up questions before invoking search tools.
+---
+
+## Folder structure
+
+```text
+skyclad-agentic-rag/
+├── backend/                  
+│   ├── app/
+│   │   ├── main.py            # FastAPI application & API routes
+│   │   ├── agent.py           # The while-loop state machine & routing
+│   │   ├── retriever.py       # FAISS, BM25, RRF, Cross-Encoder logic
+│   │   ├── tools.py           # AST Calculator & Tool schemas
+│   │   └── memory.py          # Sliding window conversational state
+│   ├── data_pipeline/         
+│   │   ├── ingest.py          # Downloads/reads arXiv PDFs
+│   │   └── build_index.py     # Chunks -> Embeds -> Saves FAISS/BM25 indices
+│   ├── utils/                 
+│   │   └── logger.py          # Configures terminal observability
+│   └── Dockerfile             # Backend container setup
+├── config.py                  # Centralized hyperparameters
+├── docker-compose.yml         # One-click deployment
+├── requirements.txt           # Core dependencies
+└── README.md                  # Documentation
+
+---
+
+## Engineering Decisions Log
+
+This section breaks down why I built the system this way, prioritizing control and observability over framework magic.
+
+**Agent Framework (Raw Python vs. LangChain):** I intentionally bypassed heavy abstractions like LangChain or LangGraph. I built the state machine using a native while loop and Groq's tool-calling API. This gave me 100% observability into the execution state and allowed me to implement a hard max_loops circuit breaker to prevent infinite, expensive LLM recursion.
+
+**PDF Extraction (PyMuPDF):** I chose PyMuPDF over PyPDF2 because arXiv papers have dense two-column layouts and complex math. PyMuPDF is significantly better at preserving spatial layouts and whitespace, ensuring my text chunks weren't scrambled.
+
+**Vector Mathematics (FAISS IndexFlatIP):** Instead of using standard L2 distance, I L2-normalized my embeddings before insertion and used FAISS IndexFlatIP (Inner Product). Mathematically, an inner product of normalized vectors yields exact Cosine Similarity, which is the gold standard for measuring semantic text distance, regardless of document length.
+
+**Retrieval Engine (Depth > Breadth):** I didn't want to just return top-K vectors. I implemented Hybrid Search (Semantic + BM25) to catch both contextual meaning and exact acronyms. However, the most critical addition was the MS-MARCO Cross-Encoder Reranker.
+
+Ablation Note: Without the reranker, FAISS would occasionally return chunks that matched keywords but lacked context, confusing the LLM. By adding the Cross-Encoder with a strict 0.0 relevance threshold, the system actively drops weak chunks. If no chunks pass, it returns an empty array, forcing the LLM to admit it doesn't know rather than hallucinating.
+
+**Memory Design:** I implemented a Conversational Memory (sliding window of the last N turns) because resolving pronouns (e.g., "What did that paper say?") is critical for natural RAG interactions.
+
+## Handling Failure Modes
+
+The system was heavily tested against edge cases. Here is how it reacts:
+
+**The corpus doesn't contain the answer:** The Cross-Encoder assigns negative scores to irrelevant chunks. The 0.0 threshold blocks them, and the Retriever returns an empty context to the LLM. The system prompt strictly forces the Agent to reply, "The corpus does not contain this information," preventing hallucination.
+
+**The user asks something ambiguous:** (e.g., "Summarize the paper"). The LLM recognizes the missing entity, bypasses the retrieval tool to save compute, and asks the user, "Which specific paper are you referring to?"
+
+**The user asks something outside the domain:** (e.g., "Who won the World Cup?"). The system prompt dictates strict domain boundaries. The agent will refuse to call search tools and politely state it only handles AI research and math.
+
+**The retrieved context contradicts itself:** The system prompt explicitly instructs the LLM that if multiple retrieved papers offer conflicting methodologies or results, it must highlight the contradiction to the user rather than forcing a single "truth."
+
+## Known Limitations & Future Work
+
+If I had another week to work on this, here is exactly what I would improve:
+
+**Persistent Memory Migration:** Currently, the sliding window memory is stored in RAM (memory.py). It works perfectly for a single session, but it is volatile. I would migrate this state to a lightweight Redis store to allow cross-session memory and scale across multiple API workers.
+
+**LLM Query Rewriter:** Right now, the sliding window provides context, but the LLM still has to generate the search query. I would add a small, fast pre-processing LLM step to explicitly rewrite pronouns based on history (e.g., translating "What are its drawbacks?" to "DINORANKCLIP drawbacks") before hitting the Vector database.
+
+**Semantic Chunking:** I used a fixed token-size sliding window for chunking. While standard, it's a blunt instrument for scientific PDFs and risks cutting mathematical proofs in half. I would implement a layout-aware parser to chunk documents by their actual structural headers (Abstract, Methodology, Conclusion) to preserve perfect semantic boundaries.
 
 ## Demo Video
 
-- Demo link placeholder: `<INSERT UNLISTED YOUTUBE/LOOM LINK HERE>`
+🔗 Watch the Architecture & Live Demo Here
+
+In this video, I walk through the architecture diagram, demonstrate the multi-tool synthesis (Calculator + RAG), trigger the ambiguity failure mode, and show how the stateful memory resolves context.
