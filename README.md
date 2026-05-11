@@ -197,7 +197,7 @@ If I had another week to work on this, here is exactly what I would improve:
 
 ##### *(Note: 
 
-* Please consider using headphones, turning on the captions and lowering the speed by a little bit in YouTube to get a smoother experience and understanding. 
+* Please consider using headphones, turning on captions and lowering down the speed by a little bit in YouTube to get a smoother experience and understanding. 
 
 * The video runs slightly over the 8-minute mark at 9:02 to ensure I fully demonstrated the architeccture, state machine logic, live tool execution, and configs and tradeoffs).*
 ---
