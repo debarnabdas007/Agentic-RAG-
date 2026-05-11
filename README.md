@@ -61,8 +61,8 @@ You can clone and run this entire system in under 5 minutes using Docker.
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE                                │
 │                                                                           │
-│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬──> FAISS (IndexFlatIP)    │
-│ (Layout safe)                                 └──> BM25 (Keyword Index)   │
+│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬─> Embed (MiniLM) ──> FAISS│
+│ (Layout safe)                                 └─> Tokenize ────────> BM25 │
 └───────────────────────────────────────────────▲───────────────────────────┘
                                                 │ (Vector/Keyword Sync)
 ┌───────────────────────────────────────────────▼───────────────────────────┐
@@ -84,10 +84,11 @@ You can clone and run this entire system in under 5 minutes using Docker.
 │        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
 │        │                  │                      │                │     │ │
 │        │   ┌──────────────┴───────────────┐      │                │     │ │
-│        ├──>│ 1. FAISS + BM25 Retrieval    │      │                │     │ │
-│        │   │ 2. Reciprocal Rank Fusion    │      │                │     │ │
-│        │   │ 3. MS-MARCO Cross-Encoder    │      │                │     │ │
-│        │   │ 4. Strict > 0.0 Threshold    │      │                │     │ │
+│        ├──>│ 1. Embed Query (MiniLM)      │      │                │     │ │
+│        │   │ 2. FAISS + BM25 Retrieval    │      │                │     │ │
+│        │   │ 3. Reciprocal Rank Fusion    │      │                │     │ │
+│        │   │ 4. MS-MARCO Cross-Encoder    │      │                │     │ │
+│        │   │ 5. Strict > 0.0 Threshold    │      │                │     │ │
 │        │   └──────────────┬───────────────┘      │                │     │ │
 │        │                  │                      │                │     │ │
 │        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
