@@ -19,8 +19,8 @@ You can clone and run this entire system in under 5 minutes using Docker.
 
 1. **Clone the repository:**
    ```bash
-   git clone <your-repo-link>
-   cd skyclad-agentic-rag
+   git clone https://github.com/debarnabdas007/Agentic-RAG-.git
+   cd Agentic-RAG-
    ```
 
 2. **Set up your environment variables:**
@@ -34,16 +34,17 @@ You can clone and run this entire system in under 5 minutes using Docker.
    (Note: The repo does not contain the 50 arXiv PDFs to save space. Run these to pull the papers and build the FAISS/BM25 indices locally).
 
    ```bash
-   # Create a virtual environment and install requirements
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
+   # Create a virtual environment and activate it
+   python -m venv agenticRAG_venv
+   source agenticRAG_venv/bin/activate  # On Windows: agenticRAG_venv\Scripts\activate
+
+   # Install requirements (Note: file is located inside the backend directory)
+   pip install -r backend/requirements.txt
 
    # Download papers and build the vector database
    python -m backend.data_pipeline.ingest
    python -m backend.data_pipeline.build_index
    ```
-
 4. **Spin up the Backend:**
 
    ```bash
@@ -57,27 +58,42 @@ You can clone and run this entire system in under 5 minutes using Docker.
 ## Architecture Overview
 
 ```
-┌──────────────┐      ┌───────────────┐
-│  User Query  │───►  │ FastAPI State │
-└──────────────┘      └───────┬───────┘
-                              ▼
-┌──────────────┐      ┌───────────────┐
-│ Chat History │◄────►│  Agent Brain  │ (Llama 3.1 8B via Groq)
-└──────────────┘      └───────┬───────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-┌───────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│ Calculator    │   │ Refuse/Clarify  │   │ RAG Retriever   │
-│ (ast.parse)   │   │ (Direct Output) │   │ (Hybrid Search) │
-└───────────────┘   └─────────────────┘   └─────────┬───────┘
-                                                    │
-                                                    ▼
-                                          ┌─────────────────┐
-                                          │ 1. FAISS & BM25 │
-                                          │ 2. RRF Merging  │
-                                          │ 3. Cross-Encoder│
-                                          └─────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE                                │
+│                                                                           │
+│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬──> FAISS (IndexFlatIP)    │
+│ (Layout safe)                                 └──> BM25 (Keyword Index)   │
+└───────────────────────────────────────────────▲───────────────────────────┘
+                                                │ (Vector/Keyword Sync)
+┌───────────────────────────────────────────────▼───────────────────────────┐
+│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
+│                                                                           │
+│  User Query (via FastAPI) ──> Chat Memory (Sliding Window)                │
+│                                      │                                    │
+│      ┌───────────────────────────────▼──────────────────────────────┐     │
+│      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
+│      └─┬──────────────────┬──────────────────────┬────────────────┬─┘   │ │
+│        │                  │                      │                │     │ │
+│   ┌────▼────┐        ┌────▼─────┐           ┌────▼────┐           │     │ │
+│   │ SEARCH  │        │CALCULATE │           │ CLARIFY │           │     │ │
+│   │ CORPUS  │        │  (Math)  │           │ /REFUSE │           │     │ │
+│   └────┬────┘        └────┬─────┘           └────┬────┘           │     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │ (Handles:      │     │ │
+│        │   │ ast.parse (Safe Evaluation)  │      │  Ambiguity,    │     │ │
+│        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │                │     │ │
+│        ├──>│ 1. FAISS + BM25 Retrieval    │      │                │     │ │
+│        │   │ 2. Reciprocal Rank Fusion    │      │                │     │ │
+│        │   │ 3. MS-MARCO Cross-Encoder    │      │                │     │ │
+│        │   │ 4. Strict > 0.0 Threshold    │      │                │     │ │
+│        │   └──────────────┬───────────────┘      │                │     │ │
+│        │                  │                      │                │     │ │
+│        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
+│                                                                           │
+│ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 * The Brain: A native Python while loop running a Llama 3.1 8B model via the Groq SDK.
@@ -179,5 +195,5 @@ If I had another week to work on this, here is exactly what I would improve:
 
 [🔗 **Watch the Architecture & Live Demo Here**](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
-*(Note: The video runs slightly over the 8-minute mark at 9:02 to ensure I fully demonstrated the architeccture, state machine logic, live tool execution, and configs and tradeoffs).*
+##### *(Note: The video runs slightly over the 8-minute mark at 9:02 to ensure I fully demonstrated the architeccture, state machine logic, live tool execution, and configs and tradeoffs).*
 ---
