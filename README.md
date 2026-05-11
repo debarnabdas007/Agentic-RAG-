@@ -177,7 +177,7 @@ If I had another week to work on this, here is exactly what I would improve:
 ---
 ## Demo Video
 
-🔗 Watch the Architecture & Live Demo Here
+[🔗 **Watch the Architecture & Live Demo Here**](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
-#### In this video, I walk through the architecture diagram, demonstrate the multi-tool synthesis (Calculator + RAG), trigger the ambiguity failure mode, and show how the stateful memory resolves context.
+*(Note: The video runs slightly over the 8-minute mark at 9:02 to ensure I fully demonstrated the architeccture, state machine logic, live tool execution, and configs and tradeoffs).*
 ---

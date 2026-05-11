@@ -8,4 +8,6 @@ I wanted explicit control over:
 - routing behavior
 - state transitions
 
-so I implemented the orchestration manually to better understand the agent loop mechanics.
+
+
+so I implemented the orchestration manually to better understand the agent loop mechanics

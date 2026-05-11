@@ -39,3 +39,41 @@ skyclad-agentic-rag/
 ├── README.md                           # Your design decisions and setup guide
 └── logs/
     └── agent.log                       #  Where the logger writes the agent's brain dumps
+
+
+
+
+
+
+=======================================================================
+               SKYCLAD AGENTIC RAG: STATE MACHINE ARCHITECTURE
+=======================================================================
+
+┌─────────────────────────────────────────────────────────┐
+│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE              │
+│                                                         │
+│ arXiv PDFs ──> PyMuPDF ──> Chunking ──┬──> FAISS Index  │
+│ (Layout safe)                         └──> BM25 Corpus  │
+└─────────────────────────────────────────────────────────┘
+                               │
+┌─────────────────────────────────────────────────────────┐
+│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)       │
+│                                                         │
+│  User Query ──> Chat Memory (Sliding Window)            │
+│                      │                                  │
+│      ┌───────────────▼──────────────────────────┐       │
+│      │ LLM Brain (Intent Routing & Thought)     │<─┐    │
+│      └─┬─────────────┬──────────────┬─────────┬─┘  │    │
+│        │             │              │         │    │    │
+│   ┌────▼────┐   ┌────▼────┐    ┌────▼────┐    │    │    │
+│   │ Search  │   │Calculate│    │ Clarify │    │    │    │
+│   │ Corpus  │   │ (Math)  │    │ /Refuse │    │    │    │
+│   └────┬────┘   └────┬────┘    └────┬────┘    │    │    │
+│        │             │              │         │    │    │
+│        │(Hybrid Search + Cross-Encoder)       │    │    │
+│        └─────────────┴──────────────┘         │    │    │
+│                      │                        │    │    │
+│                      └────> Update Context ───┘    │    │
+│                                                    │    │
+│ Final Action: Generate Context-Grounded Answer <───┘    │
+└─────────────────────────────────────────────────────────┘
