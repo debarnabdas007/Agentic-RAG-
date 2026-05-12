@@ -67,13 +67,22 @@ class AdvancedRetriever:
 
 
 
-    def retrieve_and_rerank(self, query: str) -> list[dict]:
-        
+    def retrieve_and_rerank(
+        self,
+        query: str,
+        *,
+        use_reranker: bool = True,
+        apply_score_threshold: bool | None = None,
+    ) -> list[dict]:
+        """
+        Hybrid RRF retrieval, optional cross-encoder rerank + threshold filter.
+        When use_reranker=False (ablations), results stay in RRF order without cross-encoder scores.
+        """
         if not query or not query.strip():
             logger.warning("Empty query received. Returning empty retrieval.")
             return []
             
-        logger.info(f"Executing retrieval for query: '{query}'")
+        logger.info(f"Executing retrieval for query: '{query}' (use_reranker={use_reranker})")
         
         semantic_ranks = self._semantic_search(query, settings.RETRIEVER_TOP_K)
         keyword_ranks = self._keyword_search(query, settings.RETRIEVER_TOP_K)
@@ -100,27 +109,36 @@ class AdvancedRetriever:
         
         # Deep copy to prevent state mutation (NOTE)
         candidate_docs = [self.metadata[idx].copy() for idx in fused_indices]
-        
-        # Reranking
-        sentence_pairs = [[query, doc['text']] for doc in candidate_docs]
-        cross_scores = self.reranker.predict(sentence_pairs)
-        
-        logger.info(f"Top reranker scores: {cross_scores[:5]}")
-        
-        for i, doc in enumerate(candidate_docs):
-            doc['rerank_score'] = float(cross_scores[i]) ## attach scores
-            
-        candidate_docs.sort(key=lambda x: x['rerank_score'], reverse=True)
-        
 
-        ## NOTE: Score Thresholding :- The foundation of the Agent's refusal logic
-        threshold = getattr(settings, 'RERANK_THRESHOLD', 0.0)
-        final_results = [
-            doc for doc in candidate_docs 
-            if doc['rerank_score'] > threshold
-        ][:settings.RERANKER_TOP_K]
-        
-        logger.info(f"Retrieved {len(final_results)} highly relevant chunks passing threshold {threshold}.")
+        if use_reranker:
+            sentence_pairs = [[query, doc['text']] for doc in candidate_docs]
+            cross_scores = self.reranker.predict(sentence_pairs)
+            logger.info(f"Top reranker scores: {cross_scores[:5]}")
+            for i, doc in enumerate(candidate_docs):
+                doc['rerank_score'] = float(cross_scores[i])
+            candidate_docs.sort(key=lambda x: x['rerank_score'], reverse=True)
+        else:
+            for i, doc in enumerate(candidate_docs):
+                idx = fused_indices[i]
+                doc['rerank_score'] = float(rrf_scores.get(idx, 0.0))
+            logger.info("Reranker skipped (ablation / diagnostic mode).")
+
+        if apply_score_threshold is None:
+            apply_score_threshold = use_reranker
+
+        threshold = settings.RERANK_THRESHOLD
+        if apply_score_threshold:
+            final_results = [
+                doc for doc in candidate_docs
+                if doc['rerank_score'] > threshold
+            ][:settings.RERANKER_TOP_K]
+        else:
+            final_results = candidate_docs[: settings.RERANKER_TOP_K]
+
+        logger.info(
+            f"Retrieved {len(final_results)} chunks "
+            f"(threshold={threshold if apply_score_threshold else 'off'}, reranker={use_reranker})."
+        )
         return final_results
 
 
