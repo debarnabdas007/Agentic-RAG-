@@ -1,46 +1,76 @@
 import ast
+import math
 import operator
+from backend.config import settings
 from backend.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-#  The Actual Python Functions ---
+
+def _count_ast_nodes(node: ast.AST) -> int:
+    n = 0
+    for child in ast.walk(node):
+        n += 1
+    return n
+
 
 def safe_calculate(expression: str) -> str:
-    """ A secure calculator that evaluates basic math expressions
-    This Prevents malicious code execution and handles mathematical edge cases...
+    """
+    Evaluates basic arithmetic via AST walking (no code execution).
+    Exponent and magnitude are bounded to avoid pathological cases like 2**100000000
+    tying up the worker.
     """
     logger.info(f"Executing Calculator tool with expression: {expression}")
-    
-    # Supported operators
+
     operators = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
         ast.Mult: operator.mul,
         ast.Div: operator.truediv,
         ast.Pow: operator.pow,
-        ast.USub: operator.neg
+        ast.USub: operator.neg,
     }
 
-    def eval_expr(node):
-        if isinstance(node, ast.Constant): # Modern Python approach.. we are not using .eval()
+    def eval_expr(node: ast.AST) -> float | int:
+        if isinstance(node, ast.Constant):
             if isinstance(node.value, (int, float)):
                 return node.value
             raise TypeError("Only numeric constants are allowed.")
-        elif isinstance(node, ast.BinOp):
+        if isinstance(node, ast.BinOp):
             if type(node.op) not in operators:
                 raise TypeError(f"Operator {type(node.op).__name__} is not allowed.")
-            return operators[type(node.op)](eval_expr(node.left), eval_expr(node.right))
-        elif isinstance(node, ast.UnaryOp):
+            if isinstance(node.op, ast.Pow):
+                left_val = eval_expr(node.left)
+                right_val = eval_expr(node.right)
+                if not isinstance(right_val, (int, float)):
+                    raise TypeError("Exponent must be numeric.")
+                if isinstance(right_val, float) and not right_val.is_integer():
+                    raise TypeError("Non-integer exponents are not supported.")
+                exp = int(right_val)
+                if abs(exp) > settings.CALC_MAX_ABS_EXPONENT:
+                    raise ValueError("Exponent is too large.")
+                base = float(left_val)
+                if base != 0 and exp > 1:
+                    est = abs(exp) * math.log10(max(abs(base), 1e-300))
+                    if est > settings.CALC_MAX_RESULT_LOG10:
+                        raise ValueError("Result would be too large to compute safely.")
+                return operators[type(node.op)](left_val, right_val)
+            left_val = eval_expr(node.left)
+            right_val = eval_expr(node.right)
+            return operators[type(node.op)](left_val, right_val)
+        if isinstance(node, ast.UnaryOp):
             if type(node.op) not in operators:
                 raise TypeError(f"Operator {type(node.op).__name__} is not allowed.")
             return operators[type(node.op)](eval_expr(node.operand))
-        else:
-            raise TypeError(f"Unsupported mathematical syntax: {type(node).__name__}")
+        raise TypeError(f"Unsupported mathematical syntax: {type(node).__name__}")
 
     try:
-        node = ast.parse(expression, mode='eval').body
-        result = eval_expr(node)
+        tree = ast.parse(expression, mode="eval")
+        if not isinstance(tree, ast.Expression):
+            raise TypeError("Invalid expression.")
+        if _count_ast_nodes(tree) > settings.CALC_MAX_AST_NODES:
+            raise ValueError("Expression has too many nodes.")
+        result = eval_expr(tree.body)
         logger.info(f"Calculator result: {result}")
         return str(result)
     except ZeroDivisionError:
@@ -50,9 +80,6 @@ def safe_calculate(expression: str) -> str:
         logger.error(f"Calculator error: {e}")
         return f"Error evaluating expression: {e}."
 
-
-
-#  The JSON Schemas for the LLM ---
 
 AGENT_TOOLS_SCHEMA = [
     {
@@ -65,28 +92,28 @@ AGENT_TOOLS_SCHEMA = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The precise search query. Extract ONLY the raw technical entity or concept, nothing else. Example: 'cross-encoder reranking'."
+                        "description": "The precise search query. Extract ONLY the raw technical entity or concept, nothing else. Example: 'cross-encoder reranking'.",
                     }
                 },
-                "required": ["query"]
-            }
-        }
+                "required": ["query"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "calculate",
-            "description": "Evaluates a mathematical expression. Use this tool ONLY when explicit mathematical computation or numerical calculation is required. NEVER estimate arithmetic mentally.",
+            "description": "Evaluates a mathematical expression with AST bounds (no code injection; large exponents rejected). Use ONLY for explicit arithmetic.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "expression": {
                         "type": "string",
-                        "description": "A standard mathematical expression, strictly using numbers and basic operators (+, -, *, /, **). Example: '100 / 4'."
+                        "description": "A mathematical expression using numbers and +, -, *, /, **. Example: '100 / 4'.",
                     }
                 },
-                "required": ["expression"]
-            }
-        }
-    }
+                "required": ["expression"],
+            },
+        },
+    },
 ]
