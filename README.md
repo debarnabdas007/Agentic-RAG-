@@ -1,57 +1,114 @@
 # Agentic RAG Architecture
 
-Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, I built a deployable, stateful backend where a Large Language Model acts as an autonomous routing engine. It decides for itself when to calculate math, when to search a dual-engine knowledge base, when to ask for clarity, and when to refuse a prompt.
+Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, this repo is a **FastAPI** backend where an LLM (Groq **Llama 3.1 8B**) chooses tools in a **native Python** loop: retrieve from a local cs.AI arXiv corpus, run a **bounded** calculator, clarify or refuse in plain text, then answer.
 
 ## Table of Contents
+
 1. [Setup Instructions](#setup-instructions)
-2. [Architecture Overview](#architecture-overview)
-3. [Folder strcuture](#folder-structure)
-4. [Engineering Decisions Log](#engineering-decisions-log)
-5. [Handling Failure Modes](#handling-failure-modes)
-7. [Known Limitations & Future Work](#known-limitations--future-work)
-8. [Demo Video](#demo-video)
+2. [API: sessions and observability](#api-sessions-and-observability)
+3. [Evaluation and ablations](#evaluation-and-ablations)
+4. [Architecture Overview](#architecture-overview)
+5. [Folder structure](#folder-structure)
+6. [Engineering Decisions Log](#engineering-decisions-log)
+7. [Handling Failure Modes](#handling-failure-modes)
+8. [Known Limitations](#known-limitations)
+9. [What you'd do with another week](#what-youd-do-with-another-week)
+10. [Demo Video](#demo-video)
 
 ---
 
 ## Setup Instructions
 
-You can clone and run this entire system in under 5 minutes using Docker.
+**Realistic first-time setup:** downloading PDFs, embedding, and pulling PyTorch / SentenceTransformers models usually takes **roughly 15–40 minutes** depending on bandwidth and CPU/GPU. The API container starts quickly **after** `data/vector_store/` exists.
 
-1. **Clone the repository:**
+1. **Clone the repository**
+
    ```bash
    git clone https://github.com/debarnabdas007/Agentic-RAG-.git
    cd Agentic-RAG-
    ```
 
-2. **Set up your environment variables:**
-   Create a `.env` file in the root directory and add your Groq API key:
+2. **Environment variables**
+
+   Create `.env` in the **repository root**:
 
    ```env
    GROQ_API_KEY=your_api_key_here
    ```
 
-3. **Run the Data Pipeline (One-time setup):**
-   (Note: The repo does not contain the 50 arXiv PDFs to save space. Run these to pull the papers and build the FAISS/BM25 indices locally).
+3. **Python venv + one-time data pipeline** (from repo root)
 
    ```bash
-   # Create a virtual environment and activate it
    python -m venv agenticRAG_venv
-   source agenticRAG_venv/bin/activate  # On Windows: agenticRAG_venv\Scripts\activate
+   agenticRAG_venv\Scripts\activate          # Windows
+   # source agenticRAG_venv/bin/activate     # macOS/Linux
 
-   # Install requirements (Note: file is located inside the backend directory)
    pip install -r backend/requirements.txt
 
-   # Download papers and build the vector database
-   python -m backend.data_pipeline.ingest
+   python -m backend.data_pipeline.ingest    # downloads PDFs → data/raw_pdfs/
    python -m backend.data_pipeline.build_index
    ```
-4. **Spin up the Backend:**
+
+   Chunking is **character-based** sliding windows (`CHUNK_SIZE` / `CHUNK_OVERLAP` in `backend/config.py`), not tokenizer tokens.
+
+4. **Run the API**
+
+   **Option A — Docker (after index exists):**
 
    ```bash
-   docker-compose up --build
+   docker compose up --build
    ```
 
-   The API will be live at http://localhost:8000/docs where you can interact with the Agent via the Swagger UI /chat endpoint.
+   `docker-compose.yml` mounts `./data` so the container can read `data/vector_store/` built in step 3.
+
+   **Option B — local uvicorn:**
+
+   ```bash
+   uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+5. **Tests**
+
+   ```bash
+   python -m pytest tests
+   ```
+
+Open **http://localhost:8000/docs** — use **`POST /chat`**.
+
+---
+
+## API: sessions and observability
+
+- **`session_id` (required for correct behavior):** Pass a stable client-generated id (e.g. UUID) on every `/chat` call. The server maps each id to its **own** `SkycladAgent` + `MemoryManager`. If you omit `session_id`, each request starts a **new** conversation (no memory carryover).
+- **Response:** `POST /chat` returns `{ "reply", "session_id", "trace" }`. Always persist `session_id` from the response if you did not send one.
+- **Debug trace:** `POST /chat?debug=true` adds a small JSON `trace` (`loops`, `tool_calls` with argument previews).
+- **Reset:** `DELETE /session/{session_id}` drops that conversation from the in-memory registry (LRU cap: `SESSION_MAX` in config).
+
+**Memory model (honest):**
+
+| Type | What ships | Role |
+|------|----------------|------|
+| **Conversation** | Sliding window of recent chat + tool messages | Coreference and multi-step tool use |
+| **Semantic** | Regex-extracted user lines like `Remember that …` / `Always …` → injected into system prompt | Long-lived preferences without an extra LLM call |
+| **Episodic** | Not a separate store | Raw tool transcripts live in the sliding window only |
+
+---
+
+## Evaluation and ablations
+
+**Harness (≥10 hand-written cases, ≥4 refusal/clarify-style):**
+
+```bash
+python -m backend.eval.evaluation_harness
+```
+
+Requires `GROQ_API_KEY` and a built index. Each case uses a **fresh** agent so history does not leak between tests.
+
+**Ablations (chunk counts + harness pass rate with vs without reranker):**
+
+```bash
+python -m backend.eval.ablation_study
+```
 
 ---
 
@@ -66,139 +123,105 @@ You can clone and run this entire system in under 5 minutes using Docker.
 └───────────────────────────────────────────────▲───────────────────────────┘
                                                 │ (Vector/Keyword Sync)
 ┌───────────────────────────────────────────────▼───────────────────────────┐
-│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
+│ PHASE 2: ONLINE AGENTIC WORKFLOW (bounded while-loop)                   │
 │                                                                           │
-│  User Query (via FastAPI) ──> Chat Memory (Sliding Window)                │
+│  POST /chat ──> per-session MemoryManager (sliding window + semantic)     │
 │                                      │                                    │
 │      ┌───────────────────────────────▼──────────────────────────────┐     │
-│      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
+│      │  LLM: Groq tool-calling (retrieve / calculate)               │<──┐ │
 │      └─┬──────────────────┬──────────────────────┬────────────────┬─┘   │ │
 │        │                  │                      │                │     │ │
 │   ┌────▼────┐        ┌────▼─────┐           ┌────▼────┐           │     │ │
 │   │ SEARCH  │        │CALCULATE │           │ CLARIFY │           │     │ │
-│   │ CORPUS  │        │  (Math)  │           │ /REFUSE │           │     │ │
+│   │ CORPUS  │        │ (AST)    │           │ /REFUSE │           │     │ │
 │   └────┬────┘        └────┬─────┘           └────┬────┘           │     │ │
 │        │                  │                      │                │     │ │
-│        │   ┌──────────────┴───────────────┐      │ (Handles:      │     │ │
-│        │   │ ast.parse (Safe Evaluation)  │      │  Ambiguity,    │     │ │
-│        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
-│        │                  │                      │                │     │ │
-│        │   ┌──────────────┴───────────────┐      │                │     │ │
-│        ├──>│ 1. Embed Query (MiniLM)      │      │                │     │ │
-│        │   │ 2. FAISS + BM25 Retrieval    │      │                │     │ │
-│        │   │ 3. Reciprocal Rank Fusion    │      │                │     │ │
-│        │   │ 4. MS-MARCO Cross-Encoder    │      │                │     │ │
-│        │   │ 5. Strict > 0.0 Threshold    │      │                │     │ │
-│        │   └──────────────┬───────────────┘      │                │     │ │
-│        │                  │                      │                │     │ │
-│        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
+│        └──> Hybrid RRF + cross-encoder rerank + RERANK_THRESHOLD ─┘     │ │
 │                                                                           │
-│ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
+│  max_loops=5  (circuit breaker)                                           │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
-
-* The Brain: A native Python while loop running a Llama 3.1 8B model via the Groq SDK.
-
-* The Memory: A session-scoped sliding window that maintains conversational state.
-
-* The Tools: The LLM routes between an AST-based Safe Calculator, an Ambiguity Clarifier, and an Advanced RAG Retriever.
-
-* The Retriever: A multi-stage engine combining Semantic Search (FAISS) + Keyword Search (BM25), merged via Reciprocal Rank Fusion (RRF), and filtered by a Cross-Encoder Reranker.
 
 ---
 
 ## Folder structure
 
 ```text
-agentic-rag/
-│
-├── backend/                            #  The core ML & API microservice
+repo/
+├── backend/
 │   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py                     # FastAPI application & API routes
-│   │   ├── agent.py                    # The while-loop state machine & routing
-│   │   ├── retriever.py                # FAISS loading, hybrid search, reranking
-│   │   ├── tools.py                    # External API logic (search, calc, etc.)
-│   │   └── memory.py                   # Sliding window & semantic memory states
-│   │
-│   ├── data_pipeline/                  # One-time offline execution scripts
-│   │   ├── ingest.py                   # Downloads/reads arXiv PDFs
-│   │   └── build_index.py              # Chunks -> Embeds -> Saves FAISS index
-│   │
-│   ├── config.py                       # Centralized hyperparameters (Chunk size, Top-K, LLM models)
+│   │   ├── main.py              # FastAPI, lifespan, session registry
+│   │   ├── agent.py             # Agent loop
+│   │   ├── retriever.py         # FAISS + BM25 + RRF + rerank
+│   │   ├── tools.py             # Calculator + tool schemas
+│   │   ├── memory.py            # Sliding window + lightweight semantic facts
+│   │   └── session_registry.py  # Per-session agents, shared retriever
+│   ├── data_pipeline/
+│   │   ├── ingest.py
+│   │   └── build_index.py
+│   ├── eval/
+│   │   ├── evaluation_harness.py
+│   │   └── ablation_study.py
+│   ├── paths.py                 # Stable project_root()
+│   ├── config.py
 │   ├── requirements.txt
-│   └── Dockerfile                      # Backend container setup
-|
-├── utils/                              # Centralized utilities
-│   ├── __init__.py
-│   ├── logger.py                       # Configures terminal + file logging
-│   └── exceptions.py                   # Custom error classes (AgentError, RAGError)
-|
-├── frontend/                           #  The UI microservice
-│   ├── app.py                          # Streamlit application(not yet!!)
-│   ├── requirements.txt
-│   └── Dockerfile                      # Frontend container setup
-│
-├── data/                               #  Ignored by .Git
-│   ├── raw_pdfs/                       # Downloaded arXiv papers (50)
-│   └── vector_store/                   # The saved .faiss and .pkl index files
-|
-├── docker-compose.yml                  # One-click local deployment 
-├── README.md                          
-└── logs/
-    └── agent.log                       # proper log files stored
-
+│   └── Dockerfile
+├── tests/                       # pytest (calculator + memory)
+├── pytest.ini
+├── data/                        # gitignored: raw_pdfs/, vector_store/
+├── docker-compose.yml
+├── evaluation_cursor.md         # prior audit + changelog
+└── README.md
 ```
+
 ---
 
 ## Engineering Decisions Log
 
-This section breaks down why I built the system this way, prioritizing control and observability over framework magic.
-
-* **Agent Framework (Raw Python vs. LangChain):** I intentionally bypassed heavy abstractions like LangChain or LangGraph. I built the state machine using a native while loop and Groq's tool-calling API. This gave me 100% observability into the execution state and allowed me to implement a hard max_loops circuit breaker to prevent infinite, expensive LLM recursion.
-
-* **PDF Extraction (PyMuPDF):** I chose PyMuPDF over PyPDF2 because arXiv papers have dense two-column layouts and complex math. PyMuPDF is significantly better at preserving spatial layouts and whitespace, ensuring my text chunks weren't scrambled.
-
-* **Vector Mathematics (FAISS IndexFlatIP):** Instead of using standard L2 distance, I L2-normalized my embeddings before insertion and used FAISS IndexFlatIP (Inner Product). Mathematically, an inner product of normalized vectors yields exact Cosine Similarity, which is the gold standard for measuring semantic text distance, regardless of document length.
-
-* **Retrieval Engine (Depth > Breadth):** I didn't want to just return top-K vectors. I implemented Hybrid Search (Semantic + BM25) to catch both contextual meaning and exact acronyms. However, the most critical addition was the MS-MARCO Cross-Encoder Reranker.
-
-* Ablation Note: Without the reranker, FAISS would occasionally return chunks that matched keywords but lacked context, confusing the LLM. By adding the Cross-Encoder with a strict 0.0 relevance threshold, the system actively drops weak chunks. If no chunks pass, it returns an empty array, forcing the LLM to admit it doesn't know rather than hallucinating.
-
-* **Memory Design:** I implemented a Conversational Memory (sliding window of the last N turns) because resolving pronouns (e.g., "What did that paper say?") is critical for natural RAG interactions.
+- **Agent:** Raw Python loop + Groq tools instead of LangChain/LangGraph — full control, easy logging, hard **`max_loops`** cap.
+- **PDFs:** PyMuPDF for two-column arXiv layouts.
+- **Vectors:** L2-normalized embeddings + **FAISS IndexFlatIP** (= cosine similarity).
+- **Retrieval:** BM25 + FAISS fused with **RRF (k=60)**; **MS MARCO cross-encoder** rerank; chunks filtered by **`RERANK_THRESHOLD`** (default **0.0** so irrelevant scores drop out and the agent sees **empty** context rather than hallucination bait).
+- **Calculator:** `ast` walking — **no code execution**; caps on **AST size**, **exponent**, and **estimated result magnitude** to avoid `2**100000000`-style worker hangs.
+- **Sessions:** One **shared** `AdvancedRetriever` per process, one **`SkycladAgent` per `session_id`** — fixes cross-user memory bleed in the old global agent design.
 
 ---
+
 ## Handling Failure Modes
 
-The system was heavily tested against edge cases. Here is how it reacts:
-
-* **The corpus doesn't contain the answer:** The Cross-Encoder assigns negative scores to irrelevant chunks. The 0.0 threshold blocks them, and the Retriever returns an empty context to the LLM. The system prompt strictly forces the Agent to reply, "The corpus does not contain this information," preventing hallucination.
-
-* **The user asks something ambiguous:** (e.g., "Summarize the paper"). The LLM recognizes the missing entity, bypasses the retrieval tool to save compute, and asks the user, "Which specific paper are you referring to?"
-
-* **The user asks something outside the domain:** (e.g., "Who won the World Cup?"). The system prompt dictates strict domain boundaries. The agent will refuse to call search tools and politely state it only handles AI research and math.
-
-* **The retrieved context contradicts itself:** The system prompt explicitly instructs the LLM that if multiple retrieved papers offer conflicting methodologies or results, it must highlight the contradiction to the user rather than forcing a single "truth."
+- **No relevant corpus:** rerank scores ≤ threshold → **no chunks** → tool message states DB empty → system prompt forces admitting the gap.
+- **Ambiguous:** model may ask a clarifying question without calling retrieve (observable in logs / `?` in reply).
+- **Out-of-domain:** prompt-level refusal; empirically imperfect on small models — **run `evaluation_harness`** and iterate prompts from measured failures.
+- **Contradicting sources:** prompt asks the model to surface disagreement.
 
 ---
-## Known Limitations & Future Work
 
-If I had another week to work on this, here is exactly what I would improve:
+## Known Limitations
 
-* **Persistent Memory Migration:** Currently, the sliding window memory is stored in RAM (memory.py). It works perfectly for a single session, but it is volatile. I would migrate this state to a lightweight Redis store to allow cross-session memory and scale across multiple API workers.
-
-* **LLM Query Rewriter:** Right now, the sliding window provides context, but the LLM still has to generate the search query. I would add a small, fast pre-processing LLM step to explicitly rewrite pronouns based on history (e.g., translating "What are its drawbacks?" to "DINORANKCLIP drawbacks") before hitting the Vector database.
-
-* **Semantic Chunking:** I used a fixed token-size sliding window for chunking. While standard, it's a blunt instrument for scientific PDFs and risks cutting mathematical proofs in half. I would implement a layout-aware parser to chunk documents by their actual structural headers (Abstract, Methodology, Conclusion) to preserve perfect semantic boundaries.
+- Ingest pulls the **latest N cs.AI papers** (default 50), not a strict rolling 90-day window; argue or tighten in `ingest.py` if you need exact dates.
+- Session store is **in-process RAM**; scale-out needs Redis (or sticky sessions) + external session store.
+- Refusal/clarify behavior is still **LLM-dependent** for free-text turns; the harness exists to track regression.
 
 ---
+
+## What you'd do with another week
+
+- Redis-backed `session_id` + optional user auth.
+- Explicit **query rewrite** step using chat history before retrieval.
+- Stronger refusal path (lightweight classifier or structured output).
+- Layout-aware **section-based chunking** instead of fixed character windows.
+- CI running pytest + a **mocked** subset of the eval harness without network.
+
+---
+
 ## Demo Video
 
-[🔗 **Watch the Architecture & Live Demo Here**](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
+[Watch the Architecture & Live Demo](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
-##### *(Note: 
+*(If re-recording for a future submission, aim for the brief’s **5–8 minutes** and show **`session_id` + `?debug=true`** in Swagger.)*
 
-* Please consider using headphones, turning on captions and lowering down the speed by a little bit in YouTube to get a smoother experience and understanding. 
-
-* The video runs slightly over the 8-minute mark at 9:02 to ensure I fully demonstrated the architeccture, state machine logic, live tool execution, and configs and tradeoffs).*
 ---
+
+## Local audit notes
+
+See **`evaluation_cursor.md`** for a prior rubric-style review and a **changelog** of post-feedback fixes.
