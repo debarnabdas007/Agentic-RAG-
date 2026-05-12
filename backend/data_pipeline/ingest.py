@@ -1,49 +1,44 @@
-import os
 import arxiv
 from backend.config import settings
+from backend.paths import project_root
 from backend.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-def download_recent_ai_papers(max_papers=50):
-    """ Automatically fetches the latest cs.AI papers from arXiv """
-    
-    # absolute path
-    project_root = os.getcwd()  
-    target_dir = os.path.abspath(os.path.join(project_root, settings.RAW_PDF_DIR))
-    
-    # To ensure the folder exists
-    os.makedirs(target_dir, exist_ok=True)
-    
-    logger.info(f"Saving PDFs to absolute path: {target_dir}")
-    logger.info(f"Searching arXiv for {max_papers} recent cs.AI papers...")
-    
-    # Creating the search query for AI papers sorted by newest
+
+def download_recent_ai_papers(max_papers: int = 50) -> None:
+    """Fetches the latest cs.AI papers from arXiv (newest first, capped at max_papers)."""
+    target_dir = project_root() / settings.RAW_PDF_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Saving PDFs to: %s", target_dir.resolve())
+    logger.info("Searching arXiv for %s recent cs.AI papers...", max_papers)
+
     client = arxiv.Client()
     search = arxiv.Search(
         query="cat:cs.AI",
         max_results=max_papers,
-        sort_by=arxiv.SortCriterion.SubmittedDate  # For Recent Papers !!
+        sort_by=arxiv.SortCriterion.SubmittedDate,
     )
 
-    # Loop through the results and download them
     for result in client.results(search):
-        # Create a safe filename
-        safe_title = "".join([c for c in result.title if c.isalpha() or c.isdigit() or c==' ']).rstrip() # Sanitization of filename
+        safe_title = "".join(
+            [c for c in result.title if c.isalnum() or c == " "]
+        ).rstrip()
         filename = f"{safe_title}.pdf"
-        filepath = os.path.join(target_dir, filename)
-        
-        # Only download if we don't already have it.. Idempotent Downloads :-
-        if not os.path.exists(filepath):
-            logger.info(f"Downloading: {result.title}")
-            try:
-                result.download_pdf(dirpath=target_dir, filename=filename)
-            except Exception as e:
-                logger.error(f"Failed to download {result.title}: {e}")
-        else:
-            logger.info(f"Already have: {result.title}")
+        filepath = target_dir / filename
 
-    logger.info(" Data ingestion complete!")
+        if not filepath.exists():
+            logger.info("Downloading: %s", result.title)
+            try:
+                result.download_pdf(dirpath=str(target_dir), filename=filename)
+            except Exception as e:
+                logger.error("Failed to download %s: %s", result.title, e)
+        else:
+            logger.info("Already have: %s", result.title)
+
+    logger.info("Data ingestion complete.")
+
 
 if __name__ == "__main__":
     download_recent_ai_papers(50)

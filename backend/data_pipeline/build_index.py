@@ -1,163 +1,121 @@
-import os
 import pickle
-import fitz  # PyMuPDF >> PyPDF ... I am saying !!!
+from pathlib import Path
+
 import faiss
+import fitz  # PyMuPDF
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
 from backend.config import settings
+from backend.paths import project_root
 from backend.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Text claening
+
 def clean_text(text: str) -> str:
-    text = text.replace('\n', ' ')  # removes excessive newlines, spaces,.. thus better for embediing quality later on
-    return ' '.join(text.split())
+    text = text.replace("\n", " ")
+    return " ".join(text.split())
 
 
-# Chunking
 def chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """ Custom sliding-window chunker """
-    
-    ## Infinite Loop Avoidance 
+    """Character-based sliding-window chunker (chunk_size/overlap are in characters)."""
     if overlap >= chunk_size:
-        raise ValueError("Overlap must be strictly less than chunk_size to prevent infinite loops !!")
-        
-    chunks = []
+        raise ValueError("Overlap must be strictly less than chunk_size.")
+
+    chunks: list[str] = []
     start = 0
     text_len = len(text)
 
-    while start < text_len: # Continue chunking until entire document processed..
-        end = start + chunk_size # Creating chunk boundary
-        
-        # If we are not at the end of the text, snap back to the nearest space --> This avoids cutting mid-word !!
+    while start < text_len:
+        end = start + chunk_size
         if end < text_len:
-            while end > start and text[end] != ' ':
+            while end > start and text[end] != " ":
                 end -= 1
-            # If no space was found (e.g., a giant string of code), force the cut
             if end == start:
                 end = start + chunk_size
-                
-        chunk = text[start:end].strip() #removes extra spaces while extracting chunk
+
+        chunk = text[start:end].strip()
         if chunk:
-            chunks.append(chunk) # Avoids empty chunks
-            
-        # SLIDING WINDOW :- Move start forward, accounting for overlap
+            chunks.append(chunk)
         start = end - overlap
-        
 
     return chunks
 
-# Embedding + FAISS index
-def build_vector_database():
-    """ Read PDFs --> chunks --> embeds --> saves the FAISS index """
-    
-    project_root = os.getcwd()
-    pdf_dir = os.path.abspath(os.path.join(project_root, settings.RAW_PDF_DIR))
-    vector_dir = os.path.abspath(os.path.join(project_root, settings.VECTOR_STORE_DIR))
-    
-    os.makedirs(vector_dir, exist_ok=True)
-    
-    logger.info("Loading SentenceTransformer model (this may take a minute on first run)...")
-    
-    model = SentenceTransformer(settings.EMBEDDING_MODEL)
-    
-    documents = []  # this goes to embeddings only..
-    metadata = []  # but need to save the text and source:metadata, so the Agent can read it later.. used during retireval !!
 
-    pdf_files = [f for f in os.listdir(pdf_dir) if f.endswith('.pdf')] ## collecting ALL pdf file names
+def build_vector_database() -> None:
+    """Read PDFs → chunk → embed → save FAISS index and metadata pickle."""
+    root = project_root()
+    pdf_dir = root / settings.RAW_PDF_DIR
+    vector_dir = root / settings.VECTOR_STORE_DIR
+    vector_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Loading SentenceTransformer model (first run may download weights)...")
+    model = SentenceTransformer(settings.EMBEDDING_MODEL)
+
+    documents: list[str] = []
+    metadata: list[dict] = []
+
+    pdf_files = sorted(p for p in pdf_dir.iterdir() if p.suffix.lower() == ".pdf")
     if not pdf_files:
-        logger.error(f"No PDFs found in {pdf_dir}. Run ingest.py first!")
+        logger.error("No PDFs found in %s. Run ingest first.", pdf_dir)
         return
 
-    logger.info(f"Found {len(pdf_files)} PDFs. Starting extraction and chunking...")
+    logger.info("Found %s PDFs. Starting extraction and chunking...", len(pdf_files))
 
-    # Extract and Chunk
-    for filename in pdf_files:
-        filepath = os.path.join(pdf_dir, filename)
-        logger.info(f"Processing: {filename}")
-        
+    for filepath in pdf_files:
+        logger.info("Processing: %s", filepath.name)
         try:
             doc = fitz.open(filepath)
-            for page_num, page in enumerate(doc): #Page by Page processing 
-                text = page.get_text("text")        # Text extract
-                clean_txt = clean_text(text)        # cleaning text
-                
-                if not clean_txt:                   # skip empty pages.. 
+            for page_num, page in enumerate(doc):
+                text = page.get_text("text")
+                clean_txt = clean_text(text)
+                if not clean_txt:
                     continue
-                
-                chunks = chunk_text(clean_txt, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP) ## Chunking.. defined before
-                
+                chunks = chunk_text(
+                    clean_txt, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP
+                )
                 for chunk in chunks:
-                    documents.append(chunk)         # store RAW chunk
-                    metadata.append({               # store metadata
-                        "source": filename,
-                        "page": page_num + 1,
-                        "text": chunk
-                    })
-
+                    documents.append(chunk)
+                    metadata.append(
+                        {
+                            "source": filepath.name,
+                            "page": page_num + 1,
+                            "text": chunk,
+                        }
+                    )
             doc.close()
+        except Exception as e:
+            logger.error("Failed to process %s: %s", filepath.name, e)
 
-        except Exception as e:                      # This prevents one corrupted PDF crashing entire pipeline
-            logger.error(f"Failed to process {filename}: {e}")
+    logger.info("Total chunks created: %s", len(documents))
+    if not documents:
+        logger.error("No text extracted; aborting index build.")
+        return
 
-    logger.info(f"Total chunks created: {len(documents)}")
+    logger.info("Encoding chunks...")
+    embeddings = model.encode(
+        documents,
+        batch_size=32,
+        show_progress_bar=True,
+        normalize_embeddings=True,
+    )
+    embeddings = np.array(embeddings).astype("float32")
 
-    # Embedding
-    logger.info("Converting chunks into vector embeddings...")
-    
-    embeddings = model.encode(documents, batch_size=32, show_progress_bar=True, normalize_embeddings=True)  ## Normalization: vectors --> unit vector.. we need for cosine similarity.. as dot.product
-    embeddings = np.array(embeddings).astype('float32') ## Generate embeddings as a np.array
+    logger.info("Building FAISS index (IndexFlatIP = cosine similarity on L2-normalized vectors)...")
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(embeddings)
 
-    # Build FAISS Index
-    logger.info("Building FAISS index...")
-    embedding_dimension = embeddings.shape[1]
-    """IndexFlatIP (Inner Product) on normalized vectors = Exact Cosine Similarity """
-    index = faiss.IndexFlatIP(embedding_dimension)
-    index.add(embeddings) # store all vectors inside FAISS
-
-    # Saving..
-    faiss_path = os.path.join(vector_dir, "index.faiss")
-    meta_path = os.path.join(vector_dir, "metadata.pkl")
-
-    faiss.write_index(index, faiss_path)
+    faiss_path = vector_dir / "index.faiss"
+    meta_path = vector_dir / "metadata.pkl"
+    faiss.write_index(index, str(faiss_path))
     with open(meta_path, "wb") as f:
         pickle.dump(metadata, f)
 
-    logger.info(f" Vector database successfully saved to {vector_dir}")
-    logger.info(f"FAISS Index size: {index.ntotal} vectors.")
+    logger.info("Vector database saved under %s", vector_dir)
+    logger.info("FAISS index size: %s vectors.", index.ntotal)
+
 
 if __name__ == "__main__":
     build_vector_database()
-
-
-
-## THis is the one-tiime setup for offline work.. separated it from the Fast Online Retrieval
-
-'''
-PDFs
-  ↓
-Text Extraction
-  ↓
-Cleaning
-  ↓
-Chunking
-  ↓
-Embeddings
-  ↓
-FAISS Index
-  ↓
-Metadata Persistence
-
-'''   
-## NOTE:-
-'''
-For retrieval:
-
-FAISS returns vector index
-↓
-metadata[index]
-↓
-recover actual chunk text
-
-'''
