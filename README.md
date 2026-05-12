@@ -218,7 +218,6 @@ repo/
 
 [Watch the Architecture & Live Demo](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
-*(If re-recording for a future submission, aim for the brief’s **5–8 minutes** and show **`session_id` + `?debug=true`** in Swagger.)*
 
 ---
 
