@@ -4,11 +4,11 @@ Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framewor
 
 ## Table of Contents
 
-1. [Setup Instructions](#setup-instructions)
-2. [API: sessions and observability](#api-sessions-and-observability)
-3. [Evaluation and ablations](#evaluation-and-ablations)
-4. [Architecture Overview](#architecture-overview)
-5. [Folder structure](#folder-structure)
+1. [Architecture Overview](#architecture-overview)
+2. [Folder structure](#folder-structure)
+3. [Setup Instructions](#setup-instructions)
+4. [API: sessions and observability](#api-sessions-and-observability)
+5. [Evaluation and ablations](#evaluation-and-ablations)
 6. [Engineering Decisions Log](#engineering-decisions-log)
 7. [Handling Failure Modes](#handling-failure-modes)
 8. [Known Limitations](#known-limitations)
@@ -16,6 +16,107 @@ Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framewor
 10. [Demo Video](#demo-video)
 
 ---
+## Architecture Overview
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE                                │
+│                                                                           │
+│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬─> Embed (MiniLM) ──> FAISS│
+│ (Layout safe)                                 └─> Tokenize ────────> BM25 │  
+└───────────────────────────────────────────────▲───────────────────────────┘
+                                                │ (Vector/Keyword Sync)
+┌───────────────────────────────────────────────▼───────────────────────────┐
+│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
+│                                                                           │
+│  User Query + session_id (FastAPI) ──> Session Registry (LRU Cache)       │
+│                                                │                          │
+│                                 [Retrieves/Creates Per-User Agent]        │
+│                                                │                          │
+│      ┌─────────────────────────────────────────▼────────────────────┐     │
+│      │  Isolated Chat Memory (Sliding Window + Semantic Facts)      │     │
+│      └───────────────────────────────┬──────────────────────────────┘     │
+│                                      │                                    │
+│      ┌───────────────────────────────▼──────────────────────────────┐     │
+│      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
+│      └─┬──────────────────┬──────────────────────┬────────────────┬─┘   │ │
+│        │                  │                      │                │     │ │
+│   ┌────▼────┐        ┌────▼─────┐           ┌────▼────┐           │     │ │
+│   │ SEARCH  │        │CALCULATE │           │ CLARIFY │           │     │ │
+│   │ CORPUS  │        │  (Math)  │           │ /REFUSE │           │     │ │
+│   └────┬────┘        └────┬─────┘           └────┬────┘           │     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │ (Handles:      │     │ │
+│        │   │ ast.parse (Safe Evaluation)  │      │  Ambiguity,    │     │ │
+│        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │                │     │ │
+│        ├──>│ 1. FAISS + BM25 Retrieval    │      │                │     │ │
+│        │   │ 2. Reciprocal Rank Fusion    │      │                │     │ │
+│        │   │ 3. MS-MARCO Cross-Encoder    │      │                │     │ │
+│        │   │ 4. Strict > 0.0 Threshold    │      │                │     │ │
+│        │   └──────────────┬───────────────┘      │                │     │ │
+│        │                  │                      │                │     │ │
+│        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
+│                                                                           │
+│ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
+└───────────────────────────────────────────────────────────────────────────┘ 
+```
+
+---
+
+## Folder structure
+
+```text
+repo/                                             
+├── docker-compose.yml                             # Backend image; bind-mounts ./data; port 8000; loads .env
+├── pytest.ini                                     # Pytest defaults for tests/
+├── README.md                                      
+|
+├── backend/                                       # Main Python package: API, agent, pipeline, eval, utils
+│   ├── app/                                       # FastAPI application and agent runtime
+│   │   ├── __init__.py                            
+│   │   ├── main.py                                # FastAPI app, routes, lifespan, CORS, request/response models
+│   │   ├── agent.py                               # Agent: Groq tool loop, memory, retriever + calculator
+│   │   ├── retriever.py                           # AdvancedRetriever: FAISS, BM25, RRF, reranker, score threshold
+│   │   ├── tools.py                               # Tool JSON schemas + safe_calculate (AST, bounded)
+│   │   ├── memory.py                              # MemoryManager: sliding window + regex semantic facts
+│   │   └── session_registry.py                    # Per-session Agent LRU registry; shared retriever
+|   |
+│   ├── data_pipeline/                             # Offline corpus + index builders (run from repo root)
+│   │   ├── ingest.py                              # Downloads arXiv cs.AI PDFs into data/raw_pdfs/
+│   │   ├── build_index.py                         # PDF text → chunks → embeddings → FAISS + metadata.pkl
+│   │   └── NOTE_dataingestion.txt                 # Human notes for ingestion/indexing
+|   |
+│   ├── eval/                                      # Scripts for harness runs and ablations (need key + index)
+│   │   ├── __init__.py                            
+│   │   ├── evaluation_harness.py                  # Hand-written eval cases; fresh agent per case
+│   │   └── ablation_study.py                      # Reranker / chunk-count style experiments
+|   |
+│   ├── utils/                                     # Shared helpers used across backend
+│   │   ├── __init__.py                            
+│   │   ├── logger.py                              # setup_logger: stdout + logs/agent.log
+│   │   └── exceptions.py                          # Application exception types (ingest, retrieval, tools, LLM)
+|   |
+│   ├── config.py                                  # Pydantic Settings: API keys, models, RAG, sessions, calculator
+│   ├── paths.py                                   # project_root() so scripts work regardless of cwd
+│   ├── requirements.txt                           
+│   └── Dockerfile                                 # Container image running uvicorn on backend.app.main:app
+|
+├── tests/                                         # Pytest suite (import backend as installed / on PYTHONPATH)
+│   ├── test_calculator.py                         # Unit tests for safe_calculate edge cases
+│   └── test_memory.py                             # Unit tests for MemoryManager window and fact extraction
+|
+├── data/                                          # Created by Ingestion_pipeline; gitignored
+│   ├── raw_pdfs/                                  # PDFs produced by ingest
+│   └── vector_store/                              # index.faiss + metadata.pkl from build_index
+|
+├── logs/                                          # Created by logger; gitignored; holds agent.log by default
+
+```
+
+---
+
 
 ## Setup Instructions
 
@@ -112,99 +213,6 @@ python -m backend.eval.ablation_study
 
 ---
 
-## Architecture Overview
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE                                │
-│                                                                           │
-│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬─> Embed (MiniLM) ──> FAISS│
-│ (Layout safe)                                 └─> Tokenize ────────> BM25 │  
-└───────────────────────────────────────────────▲───────────────────────────┘
-                                                │ (Vector/Keyword Sync)
-┌───────────────────────────────────────────────▼───────────────────────────┐
-│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
-│                                                                           │
-│  User Query (via FastAPI) ──> Chat Memory (Sliding Window)                │
-│                                      │                                    │
-│      ┌───────────────────────────────▼──────────────────────────────┐     │
-│      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
-│      └─┬──────────────────┬──────────────────────┬────────────────┬─┘   │ │
-│        │                  │                      │                │     │ │
-│   ┌────▼────┐        ┌────▼─────┐           ┌────▼────┐           │     │ │
-│   │ SEARCH  │        │CALCULATE │           │ CLARIFY │           │     │ │
-│   │ CORPUS  │        │  (Math)  │           │ /REFUSE │           │     │ │
-│   └────┬────┘        └────┬─────┘           └────┬────┘           │     │ │
-│        │                  │                      │                │     │ │
-│        │   ┌──────────────┴───────────────┐      │ (Handles:      │     │ │
-│        │   │ ast.parse (Safe Evaluation)  │      │  Ambiguity,    │     │ │
-│        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
-│        │                  │                      │                │     │ │
-│        │   ┌──────────────┴───────────────┐      │                │     │ │
-│        ├──>│ 1. FAISS + BM25 Retrieval    │      │                │     │ │
-│        │   │ 2. Reciprocal Rank Fusion    │      │                │     │ │
-│        │   │ 3. MS-MARCO Cross-Encoder    │      │                │     │ │
-│        │   │ 4. Strict > 0.0 Threshold    │      │                │     │ │
-│        │   └──────────────┬───────────────┘      │                │     │ │
-│        │                  │                      │                │     │ │
-│        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
-│                                                                           │
-│ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
-└───────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Folder structure
-
-```text
-repo/                                             
-├── docker-compose.yml                             # Backend image; bind-mounts ./data; port 8000; loads .env
-├── pytest.ini                                     # Pytest defaults for tests/
-├── README.md                                      
-|
-├── backend/                                       # Main Python package: API, agent, pipeline, eval, utils
-│   ├── app/                                       # FastAPI application and agent runtime
-│   │   ├── __init__.py                            
-│   │   ├── main.py                                # FastAPI app, routes, lifespan, CORS, request/response models
-│   │   ├── agent.py                               # Agent: Groq tool loop, memory, retriever + calculator
-│   │   ├── retriever.py                           # AdvancedRetriever: FAISS, BM25, RRF, reranker, score threshold
-│   │   ├── tools.py                               # Tool JSON schemas + safe_calculate (AST, bounded)
-│   │   ├── memory.py                              # MemoryManager: sliding window + regex semantic facts
-│   │   └── session_registry.py                    # Per-session Agent LRU registry; shared retriever
-|   |
-│   ├── data_pipeline/                             # Offline corpus + index builders (run from repo root)
-│   │   ├── ingest.py                              # Downloads arXiv cs.AI PDFs into data/raw_pdfs/
-│   │   ├── build_index.py                         # PDF text → chunks → embeddings → FAISS + metadata.pkl
-│   │   └── NOTE_dataingestion.txt                 # Human notes for ingestion/indexing
-|   |
-│   ├── eval/                                      # Scripts for harness runs and ablations (need key + index)
-│   │   ├── __init__.py                            
-│   │   ├── evaluation_harness.py                  # Hand-written eval cases; fresh agent per case
-│   │   └── ablation_study.py                      # Reranker / chunk-count style experiments
-|   |
-│   ├── utils/                                     # Shared helpers used across backend
-│   │   ├── __init__.py                            
-│   │   ├── logger.py                              # setup_logger: stdout + logs/agent.log
-│   │   └── exceptions.py                          # Application exception types (ingest, retrieval, tools, LLM)
-|   |
-│   ├── config.py                                  # Pydantic Settings: API keys, models, RAG, sessions, calculator
-│   ├── paths.py                                   # project_root() so scripts work regardless of cwd
-│   ├── requirements.txt                           
-│   └── Dockerfile                                 # Container image running uvicorn on backend.app.main:app
-|
-├── tests/                                         # Pytest suite (import backend as installed / on PYTHONPATH)
-│   ├── test_calculator.py                         # Unit tests for safe_calculate edge cases
-│   └── test_memory.py                             # Unit tests for MemoryManager window and fact extraction
-|
-├── data/                                          # Created by Ingestion_pipeline; gitignored
-│   ├── raw_pdfs/                                  # PDFs produced by ingest
-│   └── vector_store/                              # index.faiss + metadata.pkl from build_index
-|
-├── logs/                                          # Created by logger; gitignored; holds agent.log by default
-
-```
-
 ---
 
 ## Engineering Decisions Log
@@ -235,7 +243,7 @@ repo/
 
 ---
 
-## What you'd do with another week
+## Future Improvements
 
 - Redis-backed `session_id` + optional user auth.
 - Explicit **query rewrite** step using chat history before retrieval.
@@ -249,5 +257,5 @@ repo/
 
 [Watch the Architecture & Live Demo](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
-
+#### -- by Debarnab 
 ---

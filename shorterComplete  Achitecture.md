@@ -12,7 +12,13 @@
 ┌───────────────────────────────────────────────▼───────────────────────────┐
 │ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
 │                                                                           │
-│  User Query (via FastAPI) ──> Chat Memory (Sliding Window)                │
+│  User Query + session_id (FastAPI) ──> Session Registry (LRU Cache)       │
+│                                                │                          │
+│                                 [Retrieves/Creates Per-User Agent]        │
+│                                                │                          │
+│      ┌─────────────────────────────────────────▼────────────────────┐     │
+│      │  Isolated Chat Memory (Sliding Window + Semantic Facts)      │     │
+│      └───────────────────────────────┬──────────────────────────────┘     │
 │                                      │                                    │
 │      ┌───────────────────────────────▼──────────────────────────────┐     │
 │      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
@@ -37,4 +43,4 @@
 │        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
 │                                                                           │
 │ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
-└───────────────────────────────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────────────────┘ 
