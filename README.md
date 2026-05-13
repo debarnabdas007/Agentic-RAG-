@@ -53,7 +53,7 @@ Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framewor
 
 4. **Run the API**
 
-   **Option A — Docker (after index exists):**
+   **Option A --> Docker (after index exists):**
 
    ```bash
    docker compose up --build
@@ -61,7 +61,7 @@ Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framewor
 
    `docker-compose.yml` mounts `./data` so the container can read `data/vector_store/` built in step 3.
 
-   **Option B — local uvicorn:**
+   **Option B--> local uvicorn:**
 
    ```bash
    uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000

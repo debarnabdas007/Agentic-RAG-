@@ -156,98 +156,36 @@ Semantic Search (FAISS)
 Keyword Search (BM25)
 
    ↓
-
 Reciprocal Rank Fusion (RRF)
 
    ↓
-
 Cross-Encoder Reranking
 
    ↓
-
 Threshold Filtering
 
    ↓
-
 Top Final Chunks        
-
 
 '''
 
 
 
-
 """
-User Query
-    │
-    ▼
+Why Retriever is Shared
 
-retrieve_and_rerank(query)
-    │
-    ▼
+Because retriever is READ-ONLY mostly.
 
-┌────────────────────────────┐
-│ 1. Empty Query Validation  │
-└────────────────────────────┘
-    │
-    ▼
+It only:
 
-═══════════════════════════════════════
-        PARALLEL RETRIEVAL
-═══════════════════════════════════════
+searches FAISS
+searches BM25
+reranks
 
-    ┌───────────────────────┐
-    │ 2A. Semantic Search   │
-    │                       │
-    │ Query → Embedding     │
-    │ → FAISS Search        │
-    │ → Top-K Chunks        │
-    └───────────────────────┘
+It does NOT store conversation data.
 
-                +
+So sharing retriever is safe.
 
-    ┌───────────────────────┐
-    │ 2B. BM25 Search       │
-    │                       │
-    │ Query → Tokenization  │
-    │ → BM25 Ranking        │
-    │ → Top-K Chunks        │
-    └───────────────────────┘
-
-    │
-    ▼
-
-┌────────────────────────────┐
-│ 3. Hybrid Fusion (RRF)     │
-│ Merge FAISS + BM25 ranks   │
-└────────────────────────────┘
-    │
-    ▼
-
-┌────────────────────────────┐
-│ 4. Metadata Retrieval      │
-│ Fetch text/source/page     │
-└────────────────────────────┘
-    │
-    ▼
-
-┌────────────────────────────┐
-│ 5. Cross-Encoder Reranking │
-│ Deep relevance scoring     │
-└────────────────────────────┘
-    │
-    ▼
-
-┌────────────────────────────┐
-│ 6. Threshold Filtering     │
-│ Remove weak chunks         │
-└────────────────────────────┘
-    │
-    ▼
-
-┌────────────────────────────┐
-│ 7. Final Top-N Chunks      │
-│ Returned to the Agent      │
-└────────────────────────────┘
+actually a good optimization !!
 
 """

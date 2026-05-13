@@ -14,7 +14,7 @@ logger = setup_logger(__name__)
 
 class SessionRegistry:
     """
-    One SkycladAgent per session_id so concurrent users do not share MemoryManager state.
+    One Agent per session_id so concurrent users do not share MemoryManager state.
     All sessions share the same AdvancedRetriever (read-heavy index in RAM).
     """
 

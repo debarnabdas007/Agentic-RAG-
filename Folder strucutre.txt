@@ -1,41 +1,47 @@
-skyclad-agentic-rag/
-│
-├── backend/                            #  The core ML & API microservice
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py                     # FastAPI application & API routes
-│   │   ├── agent.py                    # The while-loop state machine & routing
-│   │   ├── retriever.py                # FAISS loading, hybrid search, reranking
-│   │   ├── tools.py                    # External API logic (search, calc, etc.)
-│   │   └── memory.py                   # Sliding window & semantic memory states
-│   │
-│   ├── data_pipeline/                  #  One-time offline execution scripts
-│   │   ├── ingest.py                   # Downloads/reads arXiv PDFs
-│   │   └── build_index.py              # Chunks -> Embeds -> Saves FAISS index
-│   │
-│   ├── config.py                       #  Centralized hyperparameters (Chunk size, Top-K, LLM models)
-│   ├── requirements.txt
-│   └── Dockerfile                      # Backend container setup
+## Folder structure
+
+```text
+repo/                                              # Repository root (your folder name may differ)
+├── docker-compose.yml                             # Backend image; bind-mounts ./data; port 8000; loads .env
+├── pytest.ini                                     # Pytest defaults for tests/
+├── README.md                                      # Setup, API, architecture, decisions, limitations
 |
-├── utils/                              # 🛠️ Centralized utilities
-│   ├── __init__.py
-│   ├── logger.py                       # Configures terminal + file logging
-│   └── exceptions.py                   # Custom error classes (AgentError, RAGError)
+├── backend/                                       # Main Python package: API, agent, pipeline, eval, utils
+│   ├── app/                                       # FastAPI application and agent runtime
+│   │   ├── __init__.py                            
+│   │   ├── main.py                                # FastAPI app, routes, lifespan, CORS, request/response models
+│   │   ├── agent.py                               # SkycladAgent: Groq tool loop, memory, retriever + calculator
+│   │   ├── retriever.py                           # AdvancedRetriever: FAISS, BM25, RRF, reranker, score threshold
+│   │   ├── tools.py                               # Tool JSON schemas + safe_calculate (AST, bounded)
+│   │   ├── memory.py                              # MemoryManager: sliding window + regex semantic facts
+│   │   └── session_registry.py                    # Per-session SkycladAgent LRU registry; shared retriever
+|   |
+│   ├── data_pipeline/                             # Offline corpus + index builders (run from repo root)
+│   │   ├── ingest.py                              # Downloads arXiv cs.AI PDFs into data/raw_pdfs/
+│   │   ├── build_index.py                         # PDF text → chunks → embeddings → FAISS + metadata.pkl
+│   │   └── NOTE_dataingestion.txt                 # Human notes for ingestion/indexing
+|   |
+│   ├── eval/                                      # Scripts for harness runs and ablations (need key + index)
+│   │   ├── __init__.py                            
+│   │   ├── evaluation_harness.py                  # Hand-written eval cases; fresh agent per case
+│   │   └── ablation_study.py                      # Reranker / chunk-count style experiments
+|   |
+│   ├── utils/                                     # Shared helpers used across backend
+│   │   ├── __init__.py                            
+│   │   ├── logger.py                              # setup_logger: stdout + logs/agent.log
+│   │   └── exceptions.py                          # Application exception types (ingest, retrieval, tools, LLM)
+|   |
+│   ├── config.py                                  # Pydantic Settings: API keys, models, RAG, sessions, calculator
+│   ├── paths.py                                   # project_root() so scripts work regardless of cwd
+│   ├── requirements.txt                           # Backend dependency pins / list
+│   └── Dockerfile                                 # Container image running uvicorn on backend.app.main:app
 |
-├── frontend/                           #  The UI microservice
-│   ├── app.py                          # Streamlit application
-│   ├── requirements.txt
-│   └── Dockerfile                      # Frontend container setup
-│
-├── data/                               #  Ignored by Git
-│   ├── raw_pdfs/                       # Downloaded arXiv papers
-│   └── vector_store/                   # The saved .faiss and .pkl index files
-│
-├── evals/                              #  The required testing harness
-│   └── test_edge_cases.py              # Script to run the 10 custom questions
-│
-├── docker-compose.yml                  #  One-click local deployment 
-├── .env.example                        # Template for required keys (Groq, etc.)
-├── README.md                           # Your design decisions and setup guide
-└── logs/
-    └── agent.log                       #  Where the logger writes the agent's brain dumps
+├── tests/                                         # Pytest suite (import backend as installed / on PYTHONPATH)
+│   ├── test_calculator.py                         # Unit tests for safe_calculate edge cases
+│   └── test_memory.py                             # Unit tests for MemoryManager window and fact extraction
+|
+├── data/                                          # Created by pipeline; gitignored (not in version control)
+│   ├── raw_pdfs/                                  # PDFs produced by ingest
+│   └── vector_store/                              # index.faiss + metadata.pkl from build_index
+|
+├── logs/                                          # Created by logger; gitignored; holds agent.log by default

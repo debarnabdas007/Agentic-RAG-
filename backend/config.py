@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
     RETRIEVER_TOP_K: int = 15      # Top 15 relevant chunks after Hybrid search
     RERANKER_TOP_K: int = 5        # After Reranking, Top 5 Final chunks passed to the LLM
-    # Cross-encoder scores below this are dropped (empty retrieval → honest "not in corpus").
+    # Cross-encoder scores below this are dropped (empty retrieval --> honest "not in corpus").
     RERANK_THRESHOLD: float = 0.0
 
-    # API session eviction (in-memory; use Redis for production scale-out)
+    # API session eviction (in-memory; laster may use Redis for production scale-out)
     SESSION_MAX: int = 200
 
     # Calculator bounds (mitigate exponent / size DoS while keeping AST evaluation)

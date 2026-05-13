@@ -117,3 +117,15 @@ AGENT_TOOLS_SCHEMA = [
         },
     },
 ]
+
+
+
+
+
+
+"""
+Now calculator is :
+safe from code execution
+safer from CPU/RAM abuse
+bounded mathematically
+"""

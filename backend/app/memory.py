@@ -38,7 +38,7 @@ class MemoryManager:
         return self.history
 
     def ingest_user_stated_facts(self, user_text: str) -> None:
-        """Extract simple preference phrases from the user turn (deterministic)."""
+        """Extract simple preference phrases from the user turn (deterministic)"""
         text = user_text.strip()
         if not text:
             return
