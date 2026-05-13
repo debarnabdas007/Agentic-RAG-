@@ -5,7 +5,6 @@ Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framewor
 https://github.com/user-attachments/assets/9180c27f-ce03-43a2-b595-11c9225428ec
 
 ## Table of Contents
-
 1. [Architecture Overview](#architecture-overview)
 2. [Folder structure](#folder-structure)
 3. [Setup Instructions](#setup-instructions)
