@@ -151,20 +151,20 @@ python -m backend.eval.ablation_study
 ## Folder structure
 
 ```text
-repo/                                              # Repository root (your folder name may differ)
+repo/                                             
 ├── docker-compose.yml                             # Backend image; bind-mounts ./data; port 8000; loads .env
 ├── pytest.ini                                     # Pytest defaults for tests/
-├── README.md                                      # Setup, API, architecture, decisions, limitations
+├── README.md                                      
 |
 ├── backend/                                       # Main Python package: API, agent, pipeline, eval, utils
 │   ├── app/                                       # FastAPI application and agent runtime
 │   │   ├── __init__.py                            
 │   │   ├── main.py                                # FastAPI app, routes, lifespan, CORS, request/response models
-│   │   ├── agent.py                               # SkycladAgent: Groq tool loop, memory, retriever + calculator
+│   │   ├── agent.py                               # Agent: Groq tool loop, memory, retriever + calculator
 │   │   ├── retriever.py                           # AdvancedRetriever: FAISS, BM25, RRF, reranker, score threshold
 │   │   ├── tools.py                               # Tool JSON schemas + safe_calculate (AST, bounded)
 │   │   ├── memory.py                              # MemoryManager: sliding window + regex semantic facts
-│   │   └── session_registry.py                    # Per-session SkycladAgent LRU registry; shared retriever
+│   │   └── session_registry.py                    # Per-session Agent LRU registry; shared retriever
 |   |
 │   ├── data_pipeline/                             # Offline corpus + index builders (run from repo root)
 │   │   ├── ingest.py                              # Downloads arXiv cs.AI PDFs into data/raw_pdfs/
@@ -183,14 +183,14 @@ repo/                                              # Repository root (your folde
 |   |
 │   ├── config.py                                  # Pydantic Settings: API keys, models, RAG, sessions, calculator
 │   ├── paths.py                                   # project_root() so scripts work regardless of cwd
-│   ├── requirements.txt                           # Backend dependency pins / list
+│   ├── requirements.txt                           
 │   └── Dockerfile                                 # Container image running uvicorn on backend.app.main:app
 |
 ├── tests/                                         # Pytest suite (import backend as installed / on PYTHONPATH)
 │   ├── test_calculator.py                         # Unit tests for safe_calculate edge cases
 │   └── test_memory.py                             # Unit tests for MemoryManager window and fact extraction
 |
-├── data/                                          # Created by pipeline; gitignored (not in version control)
+├── data/                                          # Created by Ingestion_pipeline; gitignored
 │   ├── raw_pdfs/                                  # PDFs produced by ingest
 │   └── vector_store/                              # index.faiss + metadata.pkl from build_index
 |
@@ -207,7 +207,7 @@ repo/                                              # Repository root (your folde
 - **Vectors:** L2-normalized embeddings + **FAISS IndexFlatIP** (= cosine similarity).
 - **Retrieval:** BM25 + FAISS fused with **RRF (k=60)**; **MS MARCO cross-encoder** rerank; chunks filtered by **`RERANK_THRESHOLD`** (default **0.0** so irrelevant scores drop out and the agent sees **empty** context rather than hallucination bait).
 - **Calculator:** `ast` walking -- **no code execution**; caps on **AST size**, **exponent**, and **estimated result magnitude** to avoid `2**100000000`-style worker hangs.
-- **Sessions:** One **shared** `AdvancedRetriever` per process, one **`SkycladAgent` per `session_id`** — fixes cross-user memory bleed in the old global agent design.
+- **Sessions:** One **shared** `AdvancedRetriever` per process, one **`SkycladAgent` per `session_id`**-- fixes cross-user memory bleed in the old global agent design.
 
 ---
 
