@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/9180c27f-ce03-43a2-b595-11c9225428ec
 7. [Handling Failure Modes](#handling-failure-modes)
 8. [Known Limitations](#known-limitations)
 9. [What you'd do with another week](#what-youd-do-with-another-week)
-10. [Demo Video](#demo-video)
+10. [Video Explanation](#demo-video)
 
 ---
 ## Architecture Overview
@@ -257,7 +257,7 @@ python -m backend.eval.ablation_study
 
 ## Demo Video
 
-[Watch the Architecture & Live Demo](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
+[Watch Video Explanation](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
 #### -- by Debarnab 
 ---
