@@ -2,6 +2,8 @@
 
 Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, this repo is a **FastAPI** backend where an LLM (Groq **Llama 3.1 8B**) chooses tools in a **native Python** loop: retrieve from a local cs.AI arXiv corpus, run a **bounded** calculator, clarify or refuse in plain text, then answer.
 
+https://github.com/user-attachments/assets/9180c27f-ce03-43a2-b595-11c9225428ec
+
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
