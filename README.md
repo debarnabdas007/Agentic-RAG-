@@ -244,7 +244,3 @@ repo/                                              # Repository root (your folde
 
 
 ---
-
-## Local audit notes
-
-See **`evaluation_cursor.md`** for a prior rubric-style review and a **changelog** of post-feedback fixes.
