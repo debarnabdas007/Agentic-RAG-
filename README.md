@@ -115,35 +115,42 @@ python -m backend.eval.ablation_study
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE              │
-│                                                         │
-│ arXiv PDFs ──> PyMuPDF ──> Chunking ──┬──> FAISS Index  │
-│ (Layout safe)                         └──> BM25 Corpus  │
-└─────────────────────────────────────────────────────────┘
-                               │
-┌────────────────────────────────────────────────────────────────────────────────────┐
-│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                                  │
-│                                                                                    │
-│  User Query ──> Chat Memory (Sliding Window)  (pre-session memory management)      │
-│                      │                                                             │
-│      ┌───────────────▼──────────────────────────┐                                  │
-│      │ LLM Brain (Intent Routing & Thought)     │<─┐                               │
-│      └─┬─────────────┬──────────────┬─────────┬─┘  │                               │
-│        │             │              │         │    │                               │
-│   ┌────▼────┐   ┌────▼────┐    ┌────▼────┐    │    │                               │
-│   │ Search  │   │Calculate│    │ Clarify │    │    │                               │
-│   │ Corpus  │   │ (Math)  │    │ /Refuse │    │    │                               │
-│   └────┬────┘   └────┬────┘    └────┬────┘    │    │                               │
-│        │             │              │         │    │                               │
-│        │(Hybrid Search + Cross-Encoder)       │    │                               │
-│        └─────────────┴──────────────┘         │    │                               │
-│                      │                        │    │                               │
-│                      └────> Update Context ───┘    │                               │
-│                                                    │                               │
-│ Final Action: Generate Context-Grounded Answer <───┘                               │
-└────────────────────────────────────────────────────────────────────────────────────┘
-
+┌───────────────────────────────────────────────────────────────────────────┐
+│ PHASE 1: OFFLINE DUAL-INDEX KNOWLEDGE BASE                                │
+│                                                                           │
+│ arXiv PDFs ──> PyMuPDF ──> Overlap Chunking ──┬─> Embed (MiniLM) ──> FAISS│
+│ (Layout safe)                                 └─> Tokenize ────────> BM25 │  
+└───────────────────────────────────────────────▲───────────────────────────┘
+                                                │ (Vector/Keyword Sync)
+┌───────────────────────────────────────────────▼───────────────────────────┐
+│ PHASE 2: ONLINE AGENTIC WORKFLOW (The While Loop)                         │
+│                                                                           │
+│  User Query (via FastAPI) ──> Chat Memory (Sliding Window)                │
+│                                      │                                    │
+│      ┌───────────────────────────────▼──────────────────────────────┐     │
+│      │  LLM Brain: Groq Llama 3.1 8B (Intent Routing & Thought)     │<──┐ │
+│      └─┬──────────────────┬──────────────────────┬────────────────┬─┘   │ │
+│        │                  │                      │                │     │ │
+│   ┌────▼────┐        ┌────▼─────┐           ┌────▼────┐           │     │ │
+│   │ SEARCH  │        │CALCULATE │           │ CLARIFY │           │     │ │
+│   │ CORPUS  │        │  (Math)  │           │ /REFUSE │           │     │ │
+│   └────┬────┘        └────┬─────┘           └────┬────┘           │     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │ (Handles:      │     │ │
+│        │   │ ast.parse (Safe Evaluation)  │      │  Ambiguity,    │     │ │
+│        │   └──────────────┬───────────────┘      │  Out-of-Domain)│     │ │
+│        │                  │                      │                │     │ │
+│        │   ┌──────────────┴───────────────┐      │                │     │ │
+│        ├──>│ 1. FAISS + BM25 Retrieval    │      │                │     │ │
+│        │   │ 2. Reciprocal Rank Fusion    │      │                │     │ │
+│        │   │ 3. MS-MARCO Cross-Encoder    │      │                │     │ │
+│        │   │ 4. Strict > 0.0 Threshold    │      │                │     │ │
+│        │   └──────────────┬───────────────┘      │                │     │ │
+│        │                  │                      │                │     │ │
+│        └──────────────────┴──────> Update Context ──[Loop < max_loops]──┘ │
+│                                                                           │
+│ Final Action: Generate Context-Grounded Answer (Or "I don't know") <──────┘
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
