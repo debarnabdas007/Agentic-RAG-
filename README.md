@@ -1,4 +1,4 @@
-# Agentic RAG Architecture <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" align="right" /> <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" align="right" /> <img src="https://img.shields.io/badge/Groq-F55036?style=flat-square" align="right" /> <img src="https://img.shields.io/badge/RRF_Fusion-8A2BE2?style=flat-square" align="right" /> <img src="https://img.shields.io/badge/Cross_Encoders-FF4F8B?style=flat-square" align="right" /> <img src="https://img.shields.io/badge/BM25-232F3E?style=flat-square" align="right" /> <img src="https://img.shields.io/badge/FAISS-05B3DD?style=flat-square" align="right" />
+# Agentic RAG Architecture
 
 Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, this repo is a **FastAPI** backend where an LLM (Groq **Llama 3.1 8B**) chooses tools in a **native Python** loop: retrieve from a local cs.AI arXiv corpus, run a **bounded** calculator, clarify or refuse in plain text, then answer.
 
