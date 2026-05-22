@@ -1,4 +1,4 @@
-# Agentic RAG Architecture
+# Agentic RAG Architecture <a href="https://www.youtube.com/watch?v=mV9ksCoA5Xs"><img src="https://img.shields.io/badge/My_Video_Explanation-YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" align="right" /></a>
 
 Instead of building a rigid, linear RAG pipeline using a "RAG-in-a-box" framework, this repo is a **FastAPI** backend where an LLM (Groq **Llama 3.1 8B**) chooses tools in a **native Python** loop: retrieve from a local cs.AI arXiv corpus, run a **bounded** calculator, clarify or refuse in plain text, then answer.
 
@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/9180c27f-ce03-43a2-b595-11c9225428ec
 7. [Handling Failure Modes](#handling-failure-modes)
 8. [Known Limitations](#known-limitations)
 9. [What you'd do with another week](#what-youd-do-with-another-week)
-10. [Video Explanation](#demo-video)
+10. [My Video Explanation](#demo-video)
 
 ---
 ## Architecture Overview
@@ -254,7 +254,7 @@ python -m backend.eval.ablation_study
 
 ---
 
-## Demo Video
+## My Video Explanation
 
 [Watch Video Explanation](https://www.youtube.com/watch?v=mV9ksCoA5Xs)
 
